@@ -534,17 +534,42 @@ async function renderUsers() {
           <input name="badge">
 
           <label>Stopień</label>
-          <select name="rank" required>
-            <option>Posterunkowy</option>
-            <option>Sierżant</option>
-            <option>Starszy Sierżant</option>
-            <option>Aspirant</option>
-            <option>Komendant</option>
-            <option>Zastępca Komendanta</option>
-            <option>Naczelnik</option>
-            <option>Zastępca Naczelnika</option>
-            <option>Funkcjonariusz</option>
-          </select>
+<select name="rank" required>
+  <optgroup label="KORPUS SZEREGOWYCH">
+    <option value="Posterunkowy">Posterunkowy</option>
+    <option value="Starszy posterunkowy">Starszy posterunkowy</option>
+  </optgroup>
+
+  <optgroup label="KORPUS PODOFICERÓW">
+    <option value="Sierżant">Sierżant</option>
+    <option value="Starszy sierżant">Starszy sierżant</option>
+    <option value="Sierżant sztabowy">Sierżant sztabowy</option>
+  </optgroup>
+
+  <optgroup label="KORPUS ASPIRANTÓW">
+    <option value="Młodszy aspirant">Młodszy aspirant</option>
+    <option value="Aspirant">Aspirant</option>
+    <option value="Starszy aspirant">Starszy aspirant</option>
+    <option value="Aspirant sztabowy">Aspirant sztabowy</option>
+  </optgroup>
+
+  <optgroup label="KORPUS OFICERÓW MŁODSZYCH">
+    <option value="Podkomisarz">Podkomisarz</option>
+    <option value="Komisarz">Komisarz</option>
+    <option value="Nadkomisarz">Nadkomisarz</option>
+  </optgroup>
+
+  <optgroup label="KORPUS OFICERÓW STARSZYCH">
+    <option value="Podinspektor">Podinspektor</option>
+    <option value="Młodszy inspektor">Młodszy inspektor</option>
+    <option value="Inspektor">Inspektor</option>
+  </optgroup>
+
+  <optgroup label="KORPUS GENERAŁÓW">
+    <option value="Nadinspektor">Nadinspektor</option>
+    <option value="Generalny inspektor">Generalny inspektor</option>
+  </optgroup>
+</select>
 
           <button class="primary-button" type="submit">UTWÓRZ KONTO</button>
         </form>
