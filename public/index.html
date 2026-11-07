@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -8,7 +9,6 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-
   <main class="device">
     <div class="device-top">
       <div class="camera"></div>
@@ -17,7 +17,6 @@
     </div>
 
     <div class="screen">
-
       <header class="app-header">
         <div class="app-logo">BLUEBIRD</div>
         <div class="app-unit">KOMENDA POWIATOWA POLICJI</div>
@@ -26,48 +25,30 @@
 
       <div id="message" class="message hidden"></div>
 
-      <!-- LOGOWANIE -->
       <section id="loginScreen" class="screen-section hidden">
         <div class="section-title">LOGOWANIE</div>
         <p class="muted">Wprowadź dane dostępowe funkcjonariusza.</p>
-
         <form id="loginForm">
           <label for="loginUsername">IDENTYFIKATOR</label>
-          <input id="loginUsername" name="username"
-                 autocomplete="username" required>
-
+          <input id="loginUsername" name="username" autocomplete="username" required>
           <label for="loginPassword">HASŁO</label>
-          <input id="loginPassword" name="password"
-                 type="password" autocomplete="current-password" required>
-
+          <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
           <button class="primary-button" type="submit">ZALOGUJ</button>
         </form>
       </section>
 
-      <!-- PIERWSZE URUCHOMIENIE -->
-      <section id="setupScreen" class="screen-section hidden">
+      <section id="setupScreen" class="screen-section">
         <div class="section-title">PIERWSZA KONFIGURACJA</div>
-        <p class="muted">
-          Utwórz główne konto Komendantury. Będzie ono zarządzać dostępami.
-        </p>
-
+        <p class="muted">Utwórz główne konto Komendantury. Będzie ono zarządzać dostępami.</p>
         <form id="setupForm">
           <label for="setupUsername">LOGIN KOMENDANTURY</label>
-          <input id="setupUsername" name="username"
-                 autocomplete="username" required minlength="3">
-
+          <input id="setupUsername" name="username" autocomplete="username" required minlength="3">
           <label for="setupPassword">NOWE HASŁO</label>
-          <input id="setupPassword" name="password"
-                 type="password" autocomplete="new-password"
-                 required minlength="12">
-
-          <button class="primary-button" type="submit">
-            UTWÓRZ KONTO
-          </button>
+          <input id="setupPassword" name="password" type="password" autocomplete="new-password" required minlength="12">
+          <button class="primary-button" type="submit">UTWÓRZ KONTO</button>
         </form>
       </section>
 
-      <!-- PANEL -->
       <section id="dashboardScreen" class="screen-section hidden">
         <div class="user-panel">
           <div>
@@ -78,7 +59,6 @@
         </div>
 
         <div class="section-title">MENU GŁÓWNE</div>
-
         <div class="menu-grid">
           <button class="menu-button" data-page="summary">PULPIT</button>
           <button class="menu-button" data-page="people">OSOBY</button>
@@ -86,8 +66,7 @@
           <button class="menu-button" data-page="citations">WYKROCZENIA</button>
           <button class="menu-button" data-page="reports">RAPORTY</button>
           <button class="menu-button" data-page="units">PATROLE</button>
-          <button id="usersMenuButton" class="menu-button hidden"
-                  data-page="users">ZARZĄDZANIE DOSTĘPAMI</button>
+          <button id="usersMenuButton" class="menu-button hidden" data-page="users">ZARZĄDZANIE DOSTĘPAMI</button>
         </div>
 
         <div id="contentArea" class="content-area">
@@ -95,7 +74,6 @@
           <div id="summaryContent" class="summary-grid"></div>
         </div>
       </section>
-
     </div>
 
     <div class="device-bottom">
@@ -105,10 +83,7 @@
     </div>
   </main>
 
-  <footer class="page-footer">
-    SYSTEM MDT • KPP LUBIN
-  </footer>
-
+  <footer class="page-footer">SYSTEM MDT • KPP LUBIN</footer>
   <script src="/app.js"></script>
 </body>
 </html>
