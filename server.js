@@ -695,15 +695,23 @@ app.get('/api/citizens/:id', requireLogin, asyncRoute((req, res) => {
 // --------------------------------------------------
 
 const allowedRanks = [
-  'Komendant',
-  'Zastępca Komendanta',
-  'Naczelnik',
-  'Zastępca Naczelnika',
-  'Aspirant',
-  'Starszy Sierżant',
-  'Sierżant',
-  'Posterunkowy',
-  'Funkcjonariusz'
+  "Posterunkowy",
+  "Starszy posterunkowy",
+  "Sierżant",
+  "Starszy sierżant",
+  "Sierżant sztabowy",
+  "Młodszy aspirant",
+  "Aspirant",
+  "Starszy aspirant",
+  "Aspirant sztabowy",
+  "Podkomisarz",
+  "Komisarz",
+  "Nadkomisarz",
+  "Podinspektor",
+  "Młodszy inspektor",
+  "Inspektor",
+  "Nadinspektor",
+  "Generalny inspektor"
 ];
 
 app.get('/api/users', requireLogin, requireAdmin, (req, res) => {
