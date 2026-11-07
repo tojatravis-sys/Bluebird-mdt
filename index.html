@@ -1,8 +1,114 @@
-<!doctype html><html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Bluebird MDT | Polska Policja</title><link rel="stylesheet" href="/style.css"></head><body>
-<div id="login" class="login-wrap"><div class="login-card"><div class="brand-mark">B</div><div class="eyebrow">RZECZPOSPOLITA POLSKA • ROLEPLAY</div><h1>BLUEBIRD <span>MDT</span></h1><p class="muted">Policyjny System Informacyjny</p>
-<form id="loginForm"><label>LOGIN FUNKCJONARIUSZA<input name="username" value="admin" required></label><label>HASŁO<input name="password" type="password" value="Policja2026!" required></label><button class="primary wide">ZALOGUJ DO SYSTEMU <span>→</span></button></form><div class="login-foot">DOSTĘP WYŁĄCZNIE DLA UPOWAŻNIONYCH • SERWER ROLEPLAY</div></div></div>
-<div id="app" class="shell hidden"><aside class="sidebar"><div class="side-brand"><div class="brand-mark small">B</div><div><b>BLUEBIRD</b><small>POLSKA POLICJA MDT</small></div></div><div class="side-label">PANEL FUNKCJONARIUSZA</div><nav id="nav">
-<button class="nav active" data-page="overview">▦ <span>Pulpit główny</span></button><button class="nav" data-page="people">◎ <span>Osoby</span></button><button class="nav" data-page="vehicles">▣ <span>Pojazdy</span></button><button class="nav" data-page="citations">＄ <span>Mandaty</span></button><button class="nav" data-page="reports">▤ <span>Raporty</span></button><button class="nav" data-page="units">◉ <span>Patrole i jednostki</span></button><button class="nav hidden" data-page="admin" data-admin-only>⚙ <span>Komendantura</span></button></nav>
-<div class="side-bottom"><div class="secure"><i></i> POŁĄCZENIE ZABEZPIECZONE</div><small>BLUEBIRD MDT • WERSJA RP 1.0</small></div></aside>
-<main class="main"><header class="topbar"><div><span class="crumb">POLICJA /</span> <b id="pageTitle">Pulpit główny</b></div><div class="top-right"><span class="live-dot"></span><span class="muted">SYSTEM AKTYWNY</span><div class="avatar" id="avatar">J</div><div><b id="userName">Funkcjonariusz</b><small id="userRank">Policja</small></div><button id="logout" class="ghost">Wyloguj</button></div></header>
-<section class="content"><div id="view"></div></section><footer>BLUEBIRD MDT <span>•</span> SYSTEM DO GRY ROLEPLAY <span class="right">POLSKA POLICJA</span></footer></main></div><div id="toast"></div><script src="/app.js"></script></body></html>
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101b20">
+  <title>BLUEBIRD MDT | KPP Lubin</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <main class="device">
+    <div class="device-top">
+      <div class="camera"></div>
+      <div class="brand">BLUEBIRD</div>
+      <div class="device-subtitle">MOBILE DATA TERMINAL</div>
+    </div>
+
+    <div class="screen">
+
+      <header class="app-header">
+        <div class="app-logo">BLUEBIRD</div>
+        <div class="app-unit">KOMENDA POWIATOWA POLICJI</div>
+        <div class="app-location">LUBIN</div>
+      </header>
+
+      <div id="message" class="message hidden"></div>
+
+      <!-- LOGOWANIE -->
+      <section id="loginScreen" class="screen-section hidden">
+        <div class="section-title">LOGOWANIE</div>
+        <p class="muted">Wprowadź dane dostępowe funkcjonariusza.</p>
+
+        <form id="loginForm">
+          <label for="loginUsername">IDENTYFIKATOR</label>
+          <input id="loginUsername" name="username"
+                 autocomplete="username" required>
+
+          <label for="loginPassword">HASŁO</label>
+          <input id="loginPassword" name="password"
+                 type="password" autocomplete="current-password" required>
+
+          <button class="primary-button" type="submit">ZALOGUJ</button>
+        </form>
+      </section>
+
+      <!-- PIERWSZE URUCHOMIENIE -->
+      <section id="setupScreen" class="screen-section hidden">
+        <div class="section-title">PIERWSZA KONFIGURACJA</div>
+        <p class="muted">
+          Utwórz główne konto Komendantury. Będzie ono zarządzać dostępami.
+        </p>
+
+        <form id="setupForm">
+          <label for="setupUsername">LOGIN KOMENDANTURY</label>
+          <input id="setupUsername" name="username"
+                 autocomplete="username" required minlength="3">
+
+          <label for="setupPassword">NOWE HASŁO</label>
+          <input id="setupPassword" name="password"
+                 type="password" autocomplete="new-password"
+                 required minlength="12">
+
+          <button class="primary-button" type="submit">
+            UTWÓRZ KONTO
+          </button>
+        </form>
+      </section>
+
+      <!-- PANEL -->
+      <section id="dashboardScreen" class="screen-section hidden">
+        <div class="user-panel">
+          <div>
+            <div id="welcomeName" class="welcome-name">FUNKCJONARIUSZ</div>
+            <div id="userDetails" class="muted"></div>
+          </div>
+          <button id="logoutButton" class="small-button">WYLOGUJ</button>
+        </div>
+
+        <div class="section-title">MENU GŁÓWNE</div>
+
+        <div class="menu-grid">
+          <button class="menu-button" data-page="summary">PULPIT</button>
+          <button class="menu-button" data-page="people">OSOBY</button>
+          <button class="menu-button" data-page="vehicles">POJAZDY</button>
+          <button class="menu-button" data-page="citations">WYKROCZENIA</button>
+          <button class="menu-button" data-page="reports">RAPORTY</button>
+          <button class="menu-button" data-page="units">PATROLE</button>
+          <button id="usersMenuButton" class="menu-button hidden"
+                  data-page="users">ZARZĄDZANIE DOSTĘPAMI</button>
+        </div>
+
+        <div id="contentArea" class="content-area">
+          <div class="section-title">PULPIT SŁUŻBOWY</div>
+          <div id="summaryContent" class="summary-grid"></div>
+        </div>
+      </section>
+
+    </div>
+
+    <div class="device-bottom">
+      <div class="nav-square"></div>
+      <div class="nav-circle"></div>
+      <div class="nav-back"></div>
+    </div>
+  </main>
+
+  <footer class="page-footer">
+    SYSTEM MDT • KPP LUBIN
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
