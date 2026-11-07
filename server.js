@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
  display_name TEXT NOT NULL,
  badge TEXT NOT NULL,
  rank TEXT NOT NULL DEFAULT 'Sierżant',
- department TEXT NOT NULL DEFAULT 'Policja',
+ department TEXT NOT NULL DEFAULT 'KPP Lubin',
  role_group TEXT NOT NULL DEFAULT 'Funkcjonariusz'
 );
 
@@ -72,62 +72,43 @@ CREATE TABLE IF NOT EXISTS units (
 );
 `);
 
+// Uzupełnienie brakujących grup dostępu.
 db.prepare(`
  UPDATE users
  SET role_group = 'Funkcjonariusz'
  WHERE role_group IS NULL
 `).run();
 
+// Konto testowe tworzy się tylko wtedy, gdy baza nie zawiera użytkowników.
 if (!db.prepare('SELECT COUNT(*) n FROM users').get().n) {
  db.prepare(`
   INSERT INTO users
-  (username,password_hash,display_name,badge,rank,department,role_group)
-  VALUES (?,?,?,?,?,?,?)
+  (username, password_hash, display_name, badge, rank, department, role_group)
+  VALUES (?, ?, ?, ?, ?, ?, ?)
  `).run(
   'admin',
   bcrypt.hashSync('Policja2026!', 10),
-  'Jan Kowalski',
+  'Funkcjonariusz',
   'P-001',
   'Komendant',
-  'Komenda Główna Policji',
+  'KPP Lubin',
   'Komendantura'
- );
-
- db.prepare(`
-  INSERT INTO people (name,dob,address,notes,wanted)
-  VALUES (?,?,?,?,?)
- `).run(
-  'Adam Nowak',
-  '1998-04-12',
-  'Warszawa, Śródmieście',
-  'Przykładowy wpis RP',
-  0
- );
-
- db.prepare(`
-  INSERT INTO vehicles (plate,model,color,owner,status)
-  VALUES (?,?,?,?,?)
- `).run(
-  'WPR 12345',
-  'BMW Seria 3',
-  'Granatowy',
-  'Adam Nowak',
-  'Zarejestrowany'
- );
-
- db.prepare(`
-  INSERT INTO units (callsign,officers,status,area)
-  VALUES (?,?,?,?)
- `).run(
-  'P-12',
-  'Jan Kowalski / Piotr Wiśniewski',
-  'Dostępny',
-  'Warszawa – Śródmieście'
  );
 }
 
+// Aktualizacja danych istniejącego konta testowego.
+db.prepare(`
+ UPDATE users
+ SET display_name = 'Funkcjonariusz',
+     department = 'KPP Lubin'
+ WHERE username = 'admin'
+`).run();
+
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '1mb' }));
+
+// Poprawna obsługa sesji na Renderze.
+app.set('trust proxy', 1);
 
 app.use(session({
  secret: SECRET,
@@ -149,11 +130,12 @@ const auth = (req, res, next) =>
   ? next()
   : res.status(401).json({ error: 'Brak autoryzacji' });
 
+// LOGOWANIE
 app.post('/api/login', (req, res) => {
  const { username, password } = req.body || {};
 
  const u = db.prepare(
-  'SELECT * FROM users WHERE username=?'
+  'SELECT * FROM users WHERE username = ?'
  ).get(username || '');
 
  if (!u || !bcrypt.compareSync(password || '', u.password_hash)) {
@@ -174,25 +156,45 @@ app.post('/api/login', (req, res) => {
    : 'Funkcjonariusz'
  };
 
- res.json(req.session.user);
+ req.session.save(err => {
+  if (err) {
+   console.error('Błąd zapisu sesji:', err);
+   return res.status(500).json({
+    error: 'Nie udało się zapisać sesji. Spróbuj ponownie.'
+   });
+  }
+
+  res.json(req.session.user);
+ });
 });
 
+// WYLOGOWANIE
 app.post('/api/logout', (req, res) => {
- req.session.destroy(() => res.json({ ok: true }));
-});
+ req.session.destroy(err => {
+  if (err) {
+   return res.status(500).json({
+    error: 'Nie udało się wylogować'
+   });
+  }
 
+  res.clearCookie('connect.sid');
+  res.json({ ok: true });
+ });
+
+// INFORMACJE O ZALOGOWANYM UŻYTKOWNIKU
 app.get('/api/me', (req, res) => {
  res.json(req.session.user || null);
 });
 
+// PODSUMOWANIE
 app.get('/api/summary', auth, (req, res) => {
  res.json({
   people: db.prepare('SELECT COUNT(*) n FROM people').get().n,
-  wanted: db.prepare('SELECT COUNT(*) n FROM people WHERE wanted=1').get().n,
+  wanted: db.prepare('SELECT COUNT(*) n FROM people WHERE wanted = 1').get().n,
   vehicles: db.prepare('SELECT COUNT(*) n FROM vehicles').get().n,
   reports: db.prepare('SELECT COUNT(*) n FROM reports').get().n,
   units: db.prepare(
-   "SELECT COUNT(*) n FROM units WHERE status='Dostępny'"
+   "SELECT COUNT(*) n FROM units WHERE status = 'Dostępny'"
   ).get().n
  });
 });
@@ -204,28 +206,24 @@ const resources = {
   search: ['name', 'address'],
   order: 'id DESC'
  },
-
  vehicles: {
   table: 'vehicles',
   fields: ['plate', 'model', 'color', 'owner', 'status', 'notes'],
   search: ['plate', 'model', 'owner'],
   order: 'id DESC'
  },
-
  citations: {
   table: 'citations',
   fields: ['person', 'charge', 'amount', 'officer', 'notes'],
   search: ['person', 'charge', 'officer'],
   order: 'id DESC'
  },
-
  reports: {
   table: 'reports',
   fields: ['title', 'type', 'officer', 'narrative'],
   search: ['title', 'type', 'officer', 'narrative'],
   order: 'id DESC'
  },
-
  units: {
   table: 'units',
   fields: ['callsign', 'officers', 'status', 'area'],
@@ -234,6 +232,7 @@ const resources = {
  }
 };
 
+// MODUŁY SŁUŻBOWE
 for (const [key, c] of Object.entries(resources)) {
  app.get('/api/' + key, auth, (req, res) => {
   const q = String(req.query.q || '').slice(0, 100);
@@ -272,24 +271,27 @@ for (const [key, c] of Object.entries(resources)) {
    ).run(...vals);
 
    res.json(
-    db.prepare(`SELECT * FROM ${c.table} WHERE id=?`)
+    db.prepare(`SELECT * FROM ${c.table} WHERE id = ?`)
      .get(info.lastInsertRowid)
    );
   } catch (e) {
-   res.status(400).json({ error: e.message });
+   console.error(`Błąd zapisu ${key}:`, e);
+   res.status(400).json({
+    error: 'Nie udało się zapisać wpisu'
+   });
   }
  });
 
  app.delete('/api/' + key + '/:id', auth, (req, res) => {
   res.json({
    usunieto: db.prepare(
-    `DELETE FROM ${c.table} WHERE id=?`
+    `DELETE FROM ${c.table} WHERE id = ?`
    ).run(Number(req.params.id)).changes
   });
  });
 }
 
-// Uprawnienia administracyjne ma wyłącznie Komendantura.
+// UPRAWNIENIA KOMENDANTURY
 const adminOnly = (req, res, next) =>
  req.session.user?.roleGroup === 'Komendantura'
   ? next()
@@ -297,15 +299,15 @@ const adminOnly = (req, res, next) =>
      error: 'Dostęp tylko dla Komendantury'
     });
 
+// LISTA KONT
 app.get('/api/users', auth, adminOnly, (req, res) => {
- res.json(
-  db.prepare(`
-   SELECT id,username,display_name,badge,rank,department,role_group
-   FROM users ORDER BY id
-  `).all()
- );
+ res.json(db.prepare(`
+  SELECT id, username, display_name, badge, rank, department, role_group
+  FROM users ORDER BY id
+ `).all());
 });
 
+// TWORZENIE KONTA
 app.post('/api/users', auth, adminOnly, (req, res) => {
  const d = req.body || {};
 
@@ -337,8 +339,8 @@ app.post('/api/users', auth, adminOnly, (req, res) => {
 
   const info = db.prepare(`
    INSERT INTO users
-   (username,password_hash,display_name,badge,rank,department,role_group)
-   VALUES (?,?,?,?,?,?,?)
+   (username, password_hash, display_name, badge, rank, department, role_group)
+   VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
    d.username,
    bcrypt.hashSync(d.password, 10),
@@ -360,6 +362,7 @@ app.post('/api/users', auth, adminOnly, (req, res) => {
  }
 });
 
+// USUWANIE KONTA
 app.delete('/api/users/:id', auth, adminOnly, (req, res) => {
  const id = Number(req.params.id);
 
@@ -370,7 +373,7 @@ app.delete('/api/users/:id', auth, adminOnly, (req, res) => {
  }
 
  const target = db.prepare(
-  'SELECT role_group FROM users WHERE id=?'
+  'SELECT role_group FROM users WHERE id = ?'
  ).get(id);
 
  if (!target) {
@@ -382,7 +385,7 @@ app.delete('/api/users/:id', auth, adminOnly, (req, res) => {
  if (
   target.role_group === 'Komendantura' &&
   db.prepare(
-   "SELECT COUNT(*) n FROM users WHERE role_group='Komendantura'"
+   "SELECT COUNT(*) n FROM users WHERE role_group = 'Komendantura'"
   ).get().n <= 1
  ) {
   return res.status(400).json({
@@ -392,16 +395,16 @@ app.delete('/api/users/:id', auth, adminOnly, (req, res) => {
 
  res.json({
   usunieto: db.prepare(
-   'DELETE FROM users WHERE id=?'
+   'DELETE FROM users WHERE id = ?'
   ).run(id).changes
  });
 });
 
-// Wyświetlanie strony głównej.
+// STRONA GŁÓWNA
 app.get(/.*/, (req, res) => {
  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 app.listen(PORT, () => {
- console.log(`Bluebird MDT Polska działa na porcie ${PORT}`);
+ console.log(`Bluebird MDT działa na porcie ${PORT}`);
 });
