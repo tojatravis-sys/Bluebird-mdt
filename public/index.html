@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="pl">
 <head>
@@ -31,20 +30,25 @@
         <form id="loginForm">
           <label for="loginUsername">IDENTYFIKATOR</label>
           <input id="loginUsername" name="username" autocomplete="username" required>
+
           <label for="loginPassword">HASŁO</label>
           <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+
           <button class="primary-button" type="submit">ZALOGUJ</button>
         </form>
       </section>
 
-      <section id="setupScreen" class="screen-section">
+      <section id="setupScreen" class="screen-section hidden">
         <div class="section-title">PIERWSZA KONFIGURACJA</div>
-        <p class="muted">Utwórz główne konto Komendantury. Będzie ono zarządzać dostępami.</p>
+        <p class="muted">Utwórz główne konto Komendantury.</p>
+
         <form id="setupForm">
           <label for="setupUsername">LOGIN KOMENDANTURY</label>
           <input id="setupUsername" name="username" autocomplete="username" required minlength="3">
+
           <label for="setupPassword">NOWE HASŁO</label>
           <input id="setupPassword" name="password" type="password" autocomplete="new-password" required minlength="12">
+
           <button class="primary-button" type="submit">UTWÓRZ KONTO</button>
         </form>
       </section>
@@ -59,11 +63,13 @@
         </div>
 
         <div class="section-title">MENU GŁÓWNE</div>
+
         <div class="menu-grid">
           <button class="menu-button" data-page="summary">PULPIT</button>
-          <button class="menu-button" data-page="people">OSOBY</button>
+          <button class="menu-button" data-page="people">REJESTR OBYWATELI</button>
+          <button class="menu-button" data-page="citizenSearch">SPRAWDZANIE OBYWATELI</button>
           <button class="menu-button" data-page="vehicles">POJAZDY</button>
-          <button class="menu-button" data-page="citations">WYKROCZENIA</button>
+          <button class="menu-button" data-page="citations">WYKROCZENIA I MANDATY</button>
           <button class="menu-button" data-page="reports">RAPORTY</button>
           <button class="menu-button" data-page="units">PATROLE</button>
           <button id="usersMenuButton" class="menu-button hidden" data-page="users">ZARZĄDZANIE DOSTĘPAMI</button>
