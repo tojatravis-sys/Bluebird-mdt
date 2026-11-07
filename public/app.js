@@ -85,6 +85,7 @@ function escapeHTML(value) {
 
 function showMessage(message, isError = false) {
   const box = $("#message");
+
   if (!box) {
     alert(message);
     return;
@@ -92,13 +93,8 @@ function showMessage(message, isError = false) {
 
   box.textContent = message;
   box.classList.toggle("error", isError);
+  box.classList.toggle("success", !isError);
   box.hidden = false;
-
-  if (!isError) {
-    setTimeout(() => {
-      if (box.textContent === message) box.hidden = true;
-    }, 4500);
-  }
 }
 
 async function api(url, options = {}) {
@@ -112,6 +108,7 @@ async function api(url, options = {}) {
   });
 
   let data = {};
+
   try {
     data = await response.json();
   } catch {
@@ -128,7 +125,10 @@ async function api(url, options = {}) {
 function showScreen(screenId) {
   ["loginScreen", "setupScreen", "dashboardScreen"].forEach(id => {
     const screen = $("#" + id);
-    if (screen) screen.hidden = id !== screenId;
+    if (!screen) return;
+
+    screen.classList.toggle("hidden", id !== screenId);
+    screen.hidden = id !== screenId;
   });
 }
 
@@ -162,53 +162,69 @@ function updateDashboardHeader() {
   setText("#organizationName", "KPP Lubin");
 
   const usersMenu = $('[data-page="users"]');
-  if (usersMenu) usersMenu.hidden = !isAdmin();
+
+  if (usersMenu) {
+    usersMenu.classList.toggle("hidden", !isAdmin());
+    usersMenu.hidden = !isAdmin();
+  }
 }
 
 function showDashboard() {
+  if (!state.user) {
+    showScreen("loginScreen");
+    return;
+  }
+
   updateDashboardHeader();
   showScreen("dashboardScreen");
   openPage("summary");
 }
 
 async function loadInitialState() {
+  showScreen("loginScreen");
+
   try {
     const status = await api("/api/status");
     state.status = status;
 
-    if (status.setupRequired || status.needsSetup || status.initialSetup) {
+    if (status.needsSetup || status.setupRequired || status.initialSetup) {
       showScreen("setupScreen");
       return;
     }
 
-    try {
-      const result = await api("/api/me");
-      state.user = result.user || result;
-      if (state.user && state.user.username) {
-        showDashboard();
-        return;
-      }
-    } catch {
-      // Brak aktywnej sesji — pokaż logowanie.
+    const result = await api("/api/me");
+    const user = result.user || result;
+
+    if (!user || !user.username) {
+      state.user = null;
+      showScreen("loginScreen");
+      return;
     }
 
-    showScreen("loginScreen");
+    state.user = user;
+    showDashboard();
+
   } catch (error) {
-    showScreen("loginScreen");
-    showMessage("Nie udało się połączyć z serwerem: " + error.message, true);
+    state.user = null;
+
+    if (state.status?.needsSetup || state.status?.setupRequired) {
+      showScreen("setupScreen");
+    } else {
+      showScreen("loginScreen");
+      showMessage("Sesja wygasła lub nie można połączyć się z serwerem. Zaloguj się ponownie.", true);
+    }
   }
 }
 
 function bindAuthentication() {
   const loginForm = $("#loginForm");
+
   if (loginForm) {
     loginForm.addEventListener("submit", async event => {
       event.preventDefault();
 
-      const username = getFormValue(loginForm, "username") ||
-        getFormValue(loginForm, "loginUsername");
-      const password = getFormValue(loginForm, "password") ||
-        getFormValue(loginForm, "loginPassword");
+      const username = getFormValue(loginForm, "username");
+      const password = getFormValue(loginForm, "password");
 
       if (!username || !password) {
         showMessage("Wpisz login i hasło.", true);
@@ -222,38 +238,38 @@ function bindAuthentication() {
         });
 
         state.user = result.user || result;
-        showDashboard();
+
+        if (!state.user.username) {
+          throw new Error("Serwer nie zwrócił danych zalogowanego użytkownika.");
+        }
+
         loginForm.reset();
+        showDashboard();
+
       } catch (error) {
+        state.user = null;
+        showScreen("loginScreen");
         showMessage(error.message, true);
       }
     });
   }
 
   const setupForm = $("#setupForm");
+
   if (setupForm) {
     setupForm.addEventListener("submit", async event => {
       event.preventDefault();
 
-      const username = getFormValue(setupForm, "username") ||
-        getFormValue(setupForm, "setupUsername");
-      const password = getFormValue(setupForm, "password") ||
-        getFormValue(setupForm, "setupPassword");
-      const passwordConfirm = getFormValue(setupForm, "passwordConfirm") ||
-        getFormValue(setupForm, "confirmPassword");
+      const username = getFormValue(setupForm, "username");
+      const password = getFormValue(setupForm, "password");
 
       if (!username || !password) {
         showMessage("Uzupełnij login i hasło.", true);
         return;
       }
 
-      if (password.length < 10) {
-        showMessage("Hasło musi mieć co najmniej 10 znaków.", true);
-        return;
-      }
-
-      if (passwordConfirm && password !== passwordConfirm) {
-        showMessage("Hasła nie są identyczne.", true);
+      if (password.length < 12) {
+        showMessage("Hasło musi mieć co najmniej 12 znaków.", true);
         return;
       }
 
@@ -264,25 +280,34 @@ function bindAuthentication() {
         });
 
         state.user = result.user || result;
-        showDashboard();
+
+        if (!state.user.username) {
+          throw new Error("Nie udało się odczytać utworzonego konta.");
+        }
+
         setupForm.reset();
+        showDashboard();
+
       } catch (error) {
+        showScreen("setupScreen");
         showMessage(error.message, true);
       }
     });
   }
 
   const logoutButton = $("#logoutButton");
+
   if (logoutButton) {
     logoutButton.addEventListener("click", async () => {
       try {
         await api("/api/logout", { method: "POST" });
       } catch {
-        // Niezależnie od odpowiedzi wracamy do ekranu logowania.
+        // Wylogowanie lokalne również czyści ekran.
       }
 
       state.user = null;
       showScreen("loginScreen");
+      showMessage("Wylogowano. Wprowadź login i hasło.");
     });
   }
 }
@@ -290,8 +315,18 @@ function bindAuthentication() {
 function bindNavigation() {
   $$("[data-page]").forEach(button => {
     button.addEventListener("click", () => {
+      if (!state.user) {
+        showScreen("loginScreen");
+        return;
+      }
+
       const page = button.dataset.page;
-      if (page === "users" && !isAdmin()) return;
+
+      if (page === "users" && !isAdmin()) {
+        showMessage("Brak uprawnień do zarządzania kontami.", true);
+        return;
+      }
+
       openPage(page);
     });
   });
@@ -303,34 +338,20 @@ function setActiveMenu(page) {
   });
 }
 
-function openPage(page) {
-  state.page = page;
-  setActiveMenu(page);
-
-  if (page === "summary") {
-    renderSummary();
-    return;
-  }
-
-  if (page === "users") {
-    if (!isAdmin()) {
-      showMessage("Brak uprawnień do zarządzania kontami.", true);
-      return;
-    }
-    renderUsers();
-    return;
-  }
-
-  if (modules[page]) renderModule(page);
-}
-
 function contentElement() {
-  return $("#content") || $("#mainContent") || $(".dashboard-content");
+  return $("#contentArea") ||
+    $("#content") ||
+    $("#mainContent") ||
+    $(".dashboard-content");
 }
 
 function renderContainer(title, description = "") {
   const content = contentElement();
-  if (!content) return null;
+
+  if (!content) {
+    showMessage("Nie znaleziono obszaru pulpitu w HTML.", true);
+    return null;
+  }
 
   content.innerHTML = `
     <section class="content-card">
@@ -343,14 +364,48 @@ function renderContainer(title, description = "") {
   return $("#pageContent");
 }
 
+function openPage(page) {
+  if (!state.user) {
+    showScreen("loginScreen");
+    return;
+  }
+
+  state.page = page;
+  setActiveMenu(page);
+
+  if (page === "summary") {
+    renderSummary();
+    return;
+  }
+
+  if (page === "users") {
+    if (!isAdmin()) {
+      showMessage("Brak uprawnień.", true);
+      return;
+    }
+
+    renderUsers();
+    return;
+  }
+
+  if (modules[page]) {
+    renderModule(page);
+  }
+}
+
 async function renderSummary() {
-  const target = renderContainer("Pulpit KPP Lubin", "Panel systemu Bluebird MDT.");
+  const target = renderContainer(
+    "Pulpit KPP Lubin",
+    "Panel systemu Bluebird MDT."
+  );
+
   if (!target) return;
 
-  target.innerHTML = `<p>Ładowanie danych...</p>`;
+  target.innerHTML = "<p>Ładowanie danych...</p>";
 
   try {
     const data = await api("/api/summary");
+
     const values = [
       ["Osoby", data.people ?? data.peopleCount ?? 0],
       ["Pojazdy", data.vehicles ?? data.vehiclesCount ?? 0],
@@ -379,6 +434,7 @@ async function renderSummary() {
 function renderRecordForm(page, record = null) {
   const module = modules[page];
   const target = $("#pageContent");
+
   if (!target) return;
 
   const fields = module.fields.map(([key, label]) => {
@@ -400,7 +456,7 @@ function renderRecordForm(page, record = null) {
     <form id="recordForm" class="data-form">
       ${fields}
       <div class="content-actions">
-        <button type="submit">${record ? "Zapisz zmiany" : "Dodaj wpis"}</button>
+        <button type="submit">Zapisz wpis</button>
         <button type="button" id="cancelRecord" class="secondary-button">Anuluj</button>
       </div>
     </form>
@@ -442,6 +498,7 @@ function renderRecordForm(page, record = null) {
 async function renderModule(page) {
   const module = modules[page];
   const target = renderContainer(module.title, "Rejestr KPP Lubin.");
+
   if (!target) return;
 
   target.innerHTML = `
@@ -461,58 +518,47 @@ async function renderModule(page) {
 
     state.records = records;
 
-    if (!records.length) {
-      target.innerHTML = `
-        <div class="content-actions">
-          <button type="button" id="addRecord">Dodaj wpis</button>
-        </div>
-        <p>Brak wpisów w tym rejestrze.</p>
-      `;
-      $("#addRecord").addEventListener("click", () => renderRecordForm(page));
-      return;
-    }
-
-    const columns = module.fields.slice(0, 4);
-
     target.innerHTML = `
       <div class="content-actions">
         <button type="button" id="addRecord">Dodaj wpis</button>
       </div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              ${columns.map(([, label]) => `<th>${escapeHTML(label)}</th>`).join("")}
-              <th>Akcje</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${records.map((record, index) => `
+      ${records.length ? `
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
               <tr>
-                ${columns.map(([key]) => `<td>${escapeHTML(record[key] ?? "—")}</td>`).join("")}
-                <td>
-                  <button type="button" data-edit="${index}">Edytuj</button>
-                  <button type="button" class="danger-button" data-delete="${index}">Usuń</button>
-                </td>
+                ${module.fields.slice(0, 4).map(([, label]) => `<th>${escapeHTML(label)}</th>`).join("")}
+                <th>Akcje</th>
               </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              ${records.map((record, index) => `
+                <tr>
+                  ${module.fields.slice(0, 4).map(([key]) => `<td>${escapeHTML(record[key] ?? "—")}</td>`).join("")}
+                  <td>
+                    <button type="button" data-edit="${index}">Edytuj</button>
+                    <button type="button" class="danger-button" data-delete="${index}">Usuń</button>
+                  </td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      ` : "<p>Brak wpisów w tym rejestrze.</p>"}
     `;
 
     $("#addRecord").addEventListener("click", () => renderRecordForm(page));
 
     $$("[data-edit]", target).forEach(button => {
       button.addEventListener("click", () => {
-        const record = records[Number(button.dataset.edit)];
-        renderRecordForm(page, record);
+        renderRecordForm(page, records[Number(button.dataset.edit)]);
       });
     });
 
     $$("[data-delete]", target).forEach(button => {
       button.addEventListener("click", async () => {
         const record = records[Number(button.dataset.delete)];
+
         if (!record?.id) {
           showMessage("Nie można ustalić identyfikatora wpisu.", true);
           return;
@@ -524,6 +570,7 @@ async function renderModule(page) {
           await api(`${module.endpoint}/${encodeURIComponent(record.id)}`, {
             method: "DELETE"
           });
+
           showMessage("Usunięto wpis.");
           renderModule(page);
         } catch (error) {
@@ -543,6 +590,7 @@ async function renderUsers() {
     "Zarządzanie kontami",
     "Tworzenie, blokowanie i usuwanie dostępów funkcjonariuszy."
   );
+
   if (!target) return;
 
   target.innerHTML = `
@@ -572,7 +620,7 @@ async function renderUsers() {
             <thead>
               <tr>
                 <th>Login</th>
-                <th>Wyświetlana nazwa</th>
+                <th>Nazwa</th>
                 <th>Stopień</th>
                 <th>Status</th>
                 <th>Akcje</th>
@@ -604,6 +652,7 @@ async function renderUsers() {
     $$("[data-toggle-user]", target).forEach(button => {
       button.addEventListener("click", async () => {
         const user = users[Number(button.dataset.toggleUser)];
+
         try {
           await api(`/api/users/${encodeURIComponent(user.id)}`, {
             method: "PATCH",
@@ -611,6 +660,7 @@ async function renderUsers() {
               active: !(user.active === false || user.active === 0)
             })
           });
+
           showMessage("Zmieniono status konta.");
           renderUsers();
         } catch (error) {
@@ -622,12 +672,14 @@ async function renderUsers() {
     $$("[data-remove-user]", target).forEach(button => {
       button.addEventListener("click", async () => {
         const user = users[Number(button.dataset.removeUser)];
+
         if (!confirm(`Usunąć konto ${user.username}?`)) return;
 
         try {
           await api(`/api/users/${encodeURIComponent(user.id)}`, {
             method: "DELETE"
           });
+
           showMessage("Usunięto konto.");
           renderUsers();
         } catch (error) {
@@ -642,6 +694,7 @@ async function renderUsers() {
 
 function renderUserForm() {
   const target = $("#pageContent");
+
   if (!target || !isAdmin()) return;
 
   const ranks = [
@@ -690,7 +743,7 @@ function renderUserForm() {
         <button type="button" id="cancelUser" class="secondary-button">Anuluj</button>
       </div>
     </form>
-    <p class="dashboard-note">Stopień nie zmienia uprawnień operacyjnych. Każdy funkcjonariusz ma taki sam dostęp do modułów. Uprawnienia administracyjne ma wyłącznie Komendantura.</p>
+    <p class="dashboard-note">Stopień nie zmienia uprawnień operacyjnych. Uprawnienia administracyjne ma wyłącznie Komendantura.</p>
   `;
 
   $("#cancelUser").addEventListener("click", renderUsers);
