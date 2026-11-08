@@ -1,156 +1,148 @@
+
 'use strict';
 
 const express = require('express');
 const session = require('express-session');
-const SQLiteStore = require('connect-sqlite3')(session);
+const PgSession = require('connect-pg-simple')(session);
+const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
-const Database = require('better-sqlite3');
 const helmet = require('helmet');
 const path = require('path');
-const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-fs.mkdirSync(DATA_DIR, { recursive: true });
-
 const SESSION_SECRET = process.env.SESSION_SECRET;
+const DATABASE_URL = process.env.DATABASE_URL;
 
 if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
   console.error('Brak SESSION_SECRET lub jest za krótki. Ustaw go w zmiennych środowiskowych.');
   process.exit(1);
 }
 
-const db = new Database(path.join(DATA_DIR, 'bluebird.sqlite'));
+if (!DATABASE_URL) {
+  console.error('Brak DATABASE_URL. Dodaj connection string Neon w zmiennych środowiskowych Render.');
+  process.exit(1);
+}
 
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000
+});
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
-
-app.use(helmet({
-  contentSecurityPolicy: false
-}));
-
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '1mb' }));
 
+app.use(session({
+  name: 'bluebird.sid',
+  store: new PgSession({
+    pool,
+    tableName: 'user_sessions',
+    createTableIfMissing: true
+  }),
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 8 * 60 * 60 * 1000
+  }
+}));
+
 // --------------------------------------------------
-// BAZA DANYCH I MIGRACJE
+// BAZA DANYCH POSTGRESQL
 // --------------------------------------------------
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    display_name TEXT DEFAULT '',
-    badge TEXT DEFAULT '',
-    rank TEXT DEFAULT 'Funkcjonariusz',
-    department TEXT DEFAULT 'KPP Lubin',
-    role_group TEXT DEFAULT 'Funkcjonariusz',
-    active INTEGER DEFAULT 1,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-  );
+async function initializeDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      display_name TEXT DEFAULT '',
+      badge TEXT DEFAULT '',
+      rank TEXT DEFAULT 'Funkcjonariusz',
+      department TEXT DEFAULT 'KPP Lubin',
+      role_group TEXT DEFAULT 'Funkcjonariusz',
+      active INTEGER DEFAULT 1,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
 
-  CREATE TABLE IF NOT EXISTS people (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT DEFAULT '',
-    dob TEXT DEFAULT '',
-    address TEXT DEFAULT '',
-    notes TEXT DEFAULT '',
-    wanted INTEGER DEFAULT 0
-  );
+    CREATE TABLE IF NOT EXISTS people (
+      id SERIAL PRIMARY KEY,
+      name TEXT DEFAULT '',
+      first_name TEXT DEFAULT '',
+      last_name TEXT DEFAULT '',
+      pesel TEXT DEFAULT '',
+      dob TEXT DEFAULT '',
+      address TEXT DEFAULT '',
+      phone TEXT DEFAULT '',
+      documents TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      wanted INTEGER DEFAULT 0,
+      verification_status TEXT DEFAULT 'Niezweryfikowane'
+    );
 
-  CREATE TABLE IF NOT EXISTS vehicles (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    plate TEXT NOT NULL UNIQUE,
-    model TEXT DEFAULT '',
-    color TEXT DEFAULT '',
-    owner TEXT DEFAULT '',
-    status TEXT DEFAULT 'Brak informacji'
-  );
+    CREATE TABLE IF NOT EXISTS vehicles (
+      id SERIAL PRIMARY KEY,
+      plate TEXT NOT NULL UNIQUE,
+      brand TEXT DEFAULT '',
+      model TEXT DEFAULT '',
+      color TEXT DEFAULT '',
+      owner TEXT DEFAULT '',
+      status TEXT DEFAULT 'Brak informacji',
+      notes TEXT DEFAULT '',
+      person_id INTEGER
+    );
 
-  CREATE TABLE IF NOT EXISTS citations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    person TEXT DEFAULT '',
-    charge TEXT DEFAULT '',
-    amount REAL DEFAULT 0,
-    officer TEXT DEFAULT ''
-  );
+    CREATE TABLE IF NOT EXISTS citations (
+      id SERIAL PRIMARY KEY,
+      person TEXT DEFAULT '',
+      charge TEXT DEFAULT '',
+      amount DOUBLE PRECISION DEFAULT 0,
+      officer TEXT DEFAULT '',
+      date TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      person_id INTEGER
+    );
 
-  CREATE TABLE IF NOT EXISTS reports (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT DEFAULT '',
-    type TEXT DEFAULT '',
-    officer TEXT DEFAULT '',
-    narrative TEXT DEFAULT ''
-  );
+    CREATE TABLE IF NOT EXISTS reports (
+      id SERIAL PRIMARY KEY,
+      title TEXT DEFAULT '',
+      type TEXT DEFAULT '',
+      officer TEXT DEFAULT '',
+      narrative TEXT DEFAULT '',
+      date TEXT DEFAULT '',
+      status TEXT DEFAULT 'Otwarty',
+      person_id INTEGER
+    );
 
-  CREATE TABLE IF NOT EXISTS units (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    callsign TEXT NOT NULL,
-    officers TEXT DEFAULT '',
-    status TEXT DEFAULT 'Dostępny',
-    area TEXT DEFAULT ''
-  );
-`);
+    CREATE TABLE IF NOT EXISTS units (
+      id SERIAL PRIMARY KEY,
+      callsign TEXT NOT NULL,
+      officers TEXT DEFAULT '',
+      status TEXT DEFAULT 'Dostępny',
+      area TEXT DEFAULT '',
+      vehicle TEXT DEFAULT '',
+      notes TEXT DEFAULT ''
+    );
 
-function getColumns(table) {
-  return db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name);
-}
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      sid VARCHAR NOT NULL COLLATE "default",
+      sess JSON NOT NULL,
+      expire TIMESTAMP(6) NOT NULL,
+      PRIMARY KEY (sid)
+    );
 
-function addColumn(table, column, definition) {
-  if (!getColumns(table).includes(column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-  }
-}
-
-// Uzupełnianie starszej bazy bez usuwania dotychczasowych danych.
-const migrations = {
-  users: {
-    display_name: "TEXT DEFAULT ''",
-    badge: "TEXT DEFAULT ''",
-    rank: "TEXT DEFAULT 'Funkcjonariusz'",
-    department: "TEXT DEFAULT 'KPP Lubin'",
-    role_group: "TEXT DEFAULT 'Funkcjonariusz'",
-    active: 'INTEGER DEFAULT 1',
-    created_at: 'TEXT'
-  },
-  people: {
-    first_name: "TEXT DEFAULT ''",
-    last_name: "TEXT DEFAULT ''",
-    pesel: "TEXT DEFAULT ''",
-    phone: "TEXT DEFAULT ''",
-    documents: "TEXT DEFAULT ''",
-    verification_status: "TEXT DEFAULT 'Niezweryfikowane'"
-  },
-  vehicles: {
-    brand: "TEXT DEFAULT ''",
-    notes: "TEXT DEFAULT ''",
-    person_id: 'INTEGER'
-  },
-  citations: {
-    date: "TEXT DEFAULT ''",
-    notes: "TEXT DEFAULT ''",
-    person_id: 'INTEGER'
-  },
-  reports: {
-    date: "TEXT DEFAULT ''",
-    status: "TEXT DEFAULT 'Otwarty'",
-    person_id: 'INTEGER'
-  },
-  units: {
-    vehicle: "TEXT DEFAULT ''",
-    notes: "TEXT DEFAULT ''"
-  }
-};
-
-for (const [table, columns] of Object.entries(migrations)) {
-  for (const [column, definition] of Object.entries(columns)) {
-    addColumn(table, column, definition);
-  }
+    CREATE INDEX IF NOT EXISTS user_sessions_expire_idx
+    ON user_sessions (expire);
+  `);
 }
 
 // --------------------------------------------------
@@ -174,6 +166,7 @@ const modules = {
     ],
     required: ['first_name', 'last_name']
   },
+
   vehicles: {
     table: 'vehicles',
     fields: [
@@ -188,6 +181,7 @@ const modules = {
     ],
     required: ['plate']
   },
+
   citations: {
     table: 'citations',
     fields: [
@@ -201,6 +195,7 @@ const modules = {
     ],
     required: ['person', 'charge']
   },
+
   reports: {
     table: 'reports',
     fields: [
@@ -214,6 +209,7 @@ const modules = {
     ],
     required: ['title']
   },
+
   units: {
     table: 'units',
     fields: [
@@ -226,6 +222,14 @@ const modules = {
     ],
     required: ['callsign']
   }
+};
+
+const searchableFields = {
+  people: ['name', 'pesel', 'address', 'phone'],
+  vehicles: ['plate', 'brand', 'model', 'owner'],
+  citations: ['person', 'charge', 'officer'],
+  reports: ['title', 'type', 'officer', 'narrative'],
+  units: ['callsign', 'officers', 'area']
 };
 
 function cleanText(value, maxLength = 5000) {
@@ -243,19 +247,26 @@ function cleanRecord(moduleName, body) {
         result[field] = body[field] ? 1 : 0;
       } else if (field === 'person_id') {
         const value = Number(body[field]);
-        result[field] = Number.isInteger(value) && value > 0 ? value : null;
+        result[field] =
+          Number.isInteger(value) && value > 0 ? value : null;
       } else if (field === 'amount') {
         const value = Number(body[field]);
-        result[field] = Number.isFinite(value) && value >= 0 ? value : 0;
+        result[field] =
+          Number.isFinite(value) && value >= 0 ? value : 0;
       } else {
-        result[field] = cleanText(body[field], field === 'notes' || field === 'narrative' ? 5000 : 500);
+        result[field] = cleanText(
+          body[field],
+          field === 'notes' || field === 'narrative' ? 5000 : 500
+        );
       }
     }
   }
 
   if (moduleName === 'people') {
-    const firstName = result.first_name ?? cleanText(body.first_name, 100);
-    const lastName = result.last_name ?? cleanText(body.last_name, 100);
+    const firstName =
+      result.first_name ?? cleanText(body.first_name, 100);
+    const lastName =
+      result.last_name ?? cleanText(body.last_name, 100);
 
     if (firstName || lastName) {
       result.name = `${firstName} ${lastName}`.trim();
@@ -264,27 +275,6 @@ function cleanRecord(moduleName, body) {
 
   return result;
 }
-
-// --------------------------------------------------
-// SESJE I LOGOWANIE
-// --------------------------------------------------
-
-app.use(session({
-  name: 'bluebird.sid',
-  store: new SQLiteStore({
-    db: 'sessions.sqlite',
-    dir: DATA_DIR
-  }),
-  secret: SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 8 * 60 * 60 * 1000
-  }
-}));
 
 function currentUser(req) {
   if (!req.session.user) return null;
@@ -300,66 +290,80 @@ function currentUser(req) {
   };
 }
 
+function asyncRoute(handler) {
+  return (req, res, next) =>
+    Promise.resolve(handler(req, res, next)).catch(next);
+}
+
 function requireLogin(req, res, next) {
   if (!req.session.user) {
-    return res.status(401).json({ error: 'Zaloguj się, aby kontynuować.' });
+    return res.status(401).json({
+      error: 'Zaloguj się, aby kontynuować.'
+    });
   }
 
-  const user = db.prepare(
-    'SELECT active FROM users WHERE id = ?'
-  ).get(req.session.user.id);
+  pool.query(
+    'SELECT active FROM users WHERE id = $1',
+    [req.session.user.id]
+  )
+    .then(({ rows }) => {
+      if (!rows[0] || !rows[0].active) {
+        req.session.destroy(() => {});
+        return res.status(401).json({
+          error: 'Konto jest nieaktywne.'
+        });
+      }
 
-  if (!user || !user.active) {
-    req.session.destroy(() => {});
-    return res.status(401).json({ error: 'Konto jest nieaktywne.' });
-  }
-
-  next();
+      next();
+    })
+    .catch(next);
 }
 
 function requireAdmin(req, res, next) {
   if (req.session.user?.roleGroup !== 'Komendantura') {
-    return res.status(403).json({ error: 'Brak uprawnień Komendantury.' });
+    return res.status(403).json({
+      error: 'Brak uprawnień Komendantury.'
+    });
   }
 
   next();
 }
 
-function asyncRoute(handler) {
-  return (req, res, next) => {
-    try {
-      handler(req, res, next);
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: 'Wystąpił błąd serwera.' });
-    }
-  };
+function regenerateSession(req) {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate(error =>
+      error ? reject(error) : resolve()
+    );
+  });
+}
+
+function saveSession(req) {
+  return new Promise((resolve, reject) => {
+    req.session.save(error =>
+      error ? reject(error) : resolve()
+    );
+  });
 }
 
 // --------------------------------------------------
 // STATUS I PIERWSZA KONFIGURACJA
 // --------------------------------------------------
 
-app.get('/api/status', (req, res) => {
-  const count = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
+app.get('/api/status', asyncRoute(async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM users'
+  );
 
   res.json({
-    needsSetup: count === 0,
+    needsSetup: rows[0].count === 0,
     authenticated: Boolean(req.session.user),
     user: currentUser(req)
   });
-});
+}));
 
 app.post('/api/setup', asyncRoute(async (req, res) => {
-  const count = db.prepare('SELECT COUNT(*) AS count FROM users').get().count;
-
-  if (count > 0) {
-    return res.status(403).json({
-      error: 'Konto Komendantury zostało już utworzone.'
-    });
-  }
-
-  const username = cleanText(req.body.username, 40).toLowerCase();
+  const username =
+    cleanText(req.body.username, 40).toLowerCase();
   const password = String(req.body.password || '');
 
   if (!/^[a-z0-9_.-]{3,40}$/.test(username)) {
@@ -375,45 +379,75 @@ app.post('/api/setup', asyncRoute(async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
+  const client = await pool.connect();
+  let created;
 
-  const result = db.prepare(`
-    INSERT INTO users
-    (username, password_hash, display_name, badge, rank, department, role_group, active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-  `).run(
-    username,
-    passwordHash,
-    'Komendantura',
-    '',
-    'Komendant',
-    'KPP Lubin',
-    'Komendantura'
-  );
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(72819461)');
 
-  req.session.regenerate(error => {
-    if (error) {
-      console.error(error);
-      return res.status(500).json({ error: 'Nie udało się rozpocząć sesji.' });
+    const count = await client.query(
+      'SELECT COUNT(*)::int AS count FROM users'
+    );
+
+    if (count.rows[0].count > 0) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        error: 'Konto Komendantury zostało już utworzone.'
+      });
     }
 
-    req.session.user = {
-      id: result.lastInsertRowid,
+    const result = await client.query(`
+      INSERT INTO users
+      (username, password_hash, display_name, badge, rank,
+       department, role_group, active)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 1)
+      RETURNING id
+    `, [
       username,
-      displayName: 'Komendantura',
-      badge: '',
-      rank: 'Komendant',
-      department: 'KPP Lubin',
-      roleGroup: 'Komendantura'
-    };
+      passwordHash,
+      'Komendantura',
+      '',
+      'Komendant',
+      'KPP Lubin',
+      'Komendantura'
+    ]);
 
-    req.session.save(saveError => {
-      if (saveError) {
-        console.error(saveError);
-        return res.status(500).json({ error: 'Nie udało się zapisać sesji.' });
-      }
+    created = result.rows[0];
+    await client.query('COMMIT');
 
-      res.json({ success: true, user: currentUser(req) });
-    });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+
+    if (error.code === '23505') {
+      return res.status(409).json({
+        error: 'Ten login jest już zajęty.'
+      });
+    }
+
+    throw error;
+
+  } finally {
+    client.release();
+  }
+
+  await regenerateSession(req);
+
+  req.session.user = {
+    id: created.id,
+    username,
+    displayName: 'Komendantura',
+    badge: '',
+    rank: 'Komendant',
+    department: 'KPP Lubin',
+    roleGroup: 'Komendantura'
+  };
+
+  await saveSession(req);
+
+  res.json({
+    success: true,
+    user: currentUser(req)
   });
 }));
 
@@ -422,41 +456,44 @@ app.post('/api/setup', asyncRoute(async (req, res) => {
 // --------------------------------------------------
 
 app.post('/api/login', asyncRoute(async (req, res) => {
-  const username = cleanText(req.body.username, 40).toLowerCase();
+  const username =
+    cleanText(req.body.username, 40).toLowerCase();
   const password = String(req.body.password || '');
 
-  const user = db.prepare(`
-    SELECT * FROM users WHERE username = ?
-  `).get(username);
+  const result = await pool.query(
+    'SELECT * FROM users WHERE username = $1',
+    [username]
+  );
 
-  if (!user || !user.active || !(await bcrypt.compare(password, user.password_hash))) {
-    return res.status(401).json({ error: 'Nieprawidłowy login lub hasło.' });
+  const user = result.rows[0];
+
+  if (
+    !user ||
+    !user.active ||
+    !(await bcrypt.compare(password, user.password_hash))
+  ) {
+    return res.status(401).json({
+      error: 'Nieprawidłowy login lub hasło.'
+    });
   }
 
-  req.session.regenerate(error => {
-    if (error) {
-      console.error(error);
-      return res.status(500).json({ error: 'Nie udało się rozpocząć sesji.' });
-    }
+  await regenerateSession(req);
 
-    req.session.user = {
-      id: user.id,
-      username: user.username,
-      displayName: user.display_name || user.username,
-      badge: user.badge || '',
-      rank: user.rank || 'Funkcjonariusz',
-      department: user.department || 'KPP Lubin',
-      roleGroup: user.role_group || 'Funkcjonariusz'
-    };
+  req.session.user = {
+    id: user.id,
+    username: user.username,
+    displayName: user.display_name || user.username,
+    badge: user.badge || '',
+    rank: user.rank || 'Funkcjonariusz',
+    department: user.department || 'KPP Lubin',
+    roleGroup: user.role_group || 'Funkcjonariusz'
+  };
 
-    req.session.save(saveError => {
-      if (saveError) {
-        console.error(saveError);
-        return res.status(500).json({ error: 'Nie udało się zapisać sesji.' });
-      }
+  await saveSession(req);
 
-      res.json({ success: true, user: currentUser(req) });
-    });
+  res.json({
+    success: true,
+    user: currentUser(req)
   });
 }));
 
@@ -467,7 +504,9 @@ app.get('/api/me', (req, res) => {
 app.post('/api/logout', (req, res) => {
   req.session.destroy(error => {
     if (error) {
-      return res.status(500).json({ error: 'Nie udało się wylogować.' });
+      return res.status(500).json({
+        error: 'Nie udało się wylogować.'
+      });
     }
 
     res.clearCookie('bluebird.sid');
@@ -479,17 +518,33 @@ app.post('/api/logout', (req, res) => {
 // PULPIT
 // --------------------------------------------------
 
-app.get('/api/summary', requireLogin, (req, res) => {
-  const count = table => db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
+app.get('/api/summary', requireLogin, asyncRoute(async (req, res) => {
+  const tables = [
+    'people',
+    'vehicles',
+    'citations',
+    'reports',
+    'units'
+  ];
+
+  const counts = await Promise.all(
+    tables.map(async table => {
+      const result = await pool.query(
+        `SELECT COUNT(*)::int AS count FROM ${table}`
+      );
+
+      return result.rows[0].count;
+    })
+  );
 
   res.json({
-    people: count('people'),
-    vehicles: count('vehicles'),
-    citations: count('citations'),
-    reports: count('reports'),
-    units: count('units')
+    people: counts[0],
+    vehicles: counts[1],
+    citations: counts[2],
+    reports: counts[3],
+    units: counts[4]
   });
-});
+}));
 
 // --------------------------------------------------
 // REJESTRY: ODCZYT, DODAWANIE, EDYCJA, USUWANIE
@@ -499,342 +554,468 @@ for (const [moduleName, config] of Object.entries(modules)) {
   const endpoint = `/api/${moduleName}`;
   const table = config.table;
 
-  app.get(endpoint, requireLogin, asyncRoute((req, res) => {
-    const search = cleanText(req.query.q, 100);
+  app.get(
+    endpoint,
+    requireLogin,
+    asyncRoute(async (req, res) => {
+      const search = cleanText(req.query.q, 100);
+      let result;
 
-    let records;
+      if (search) {
+        const fields = searchableFields[moduleName];
 
-    if (search) {
-      const searchableFields = {
-        people: ['name', 'pesel', 'address', 'phone'],
-        vehicles: ['plate', 'brand', 'model', 'owner'],
-        citations: ['person', 'charge', 'officer'],
-        reports: ['title', 'type', 'officer', 'narrative'],
-        units: ['callsign', 'officers', 'area']
-      }[moduleName];
+        const where = fields
+          .map((field, index) => `${field} ILIKE $${index + 1}`)
+          .join(' OR ');
 
-      const where = searchableFields.map(field => `${field} LIKE ?`).join(' OR ');
-      const params = searchableFields.map(() => `%${search}%`);
+        const params = fields.map(() => `%${search}%`);
 
-      records = db.prepare(
-        `SELECT * FROM ${table} WHERE ${where} ORDER BY id DESC LIMIT 200`
-      ).all(...params);
-    } else {
-      records = db.prepare(
-        `SELECT * FROM ${table} ORDER BY id DESC LIMIT 200`
-      ).all();
-    }
+        result = await pool.query(
+          `SELECT * FROM ${table}
+           WHERE ${where}
+           ORDER BY id DESC LIMIT 200`,
+          params
+        );
+      } else {
+        result = await pool.query(
+          `SELECT * FROM ${table}
+           ORDER BY id DESC LIMIT 200`
+        );
+      }
 
-    res.json(records);
-  }));
+      res.json(result.rows);
+    })
+  );
 
-  app.post(endpoint, requireLogin, asyncRoute((req, res) => {
-    const data = cleanRecord(moduleName, req.body);
+  app.post(
+    endpoint,
+    requireLogin,
+    asyncRoute(async (req, res) => {
+      const data = cleanRecord(moduleName, req.body);
 
-    for (const field of config.required) {
-      if (!data[field] || !String(data[field]).trim()) {
+      for (const field of config.required) {
+        if (!data[field] || !String(data[field]).trim()) {
+          return res.status(400).json({
+            error: `Uzupełnij wymagane pole: ${field}.`
+          });
+        }
+      }
+
+      const columns = Object.keys(data);
+
+      if (!columns.length) {
         return res.status(400).json({
-          error: `Uzupełnij wymagane pole: ${field}.`
+          error: 'Brak danych do zapisania.'
         });
       }
-    }
 
-    const columns = Object.keys(data);
+      const placeholders = columns
+        .map((_, index) => `$${index + 1}`)
+        .join(', ');
 
-    if (moduleName === 'people') {
-      columns.push('name');
-      data.name = data.name || '';
-    }
+      const values = columns.map(column => data[column]);
 
-    const uniqueColumns = [...new Set(columns)];
-    const values = uniqueColumns.map(column => data[column]);
+      try {
+        const result = await pool.query(
+          `INSERT INTO ${table} (${columns.join(', ')})
+           VALUES (${placeholders})
+           RETURNING *`,
+          values
+        );
 
-    try {
-      const result = db.prepare(`
-        INSERT INTO ${table} (${uniqueColumns.join(', ')})
-        VALUES (${uniqueColumns.map(() => '?').join(', ')})
-      `).run(...values);
+        res.status(201).json(result.rows[0]);
 
-      const record = db.prepare(
-        `SELECT * FROM ${table} WHERE id = ?`
-      ).get(result.lastInsertRowid);
+      } catch (error) {
+        if (error.code === '23505') {
+          return res.status(409).json({
+            error: 'Taki wpis już istnieje.'
+          });
+        }
 
-      res.status(201).json(record);
-    } catch (error) {
-      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-        return res.status(409).json({ error: 'Taki wpis już istnieje.' });
+        throw error;
       }
-      throw error;
-    }
-  }));
+    })
+  );
 
-  app.patch(`${endpoint}/:id`, requireLogin, asyncRoute((req, res) => {
-    const id = Number(req.params.id);
+  app.patch(
+    `${endpoint}/:id`,
+    requireLogin,
+    asyncRoute(async (req, res) => {
+      const id = Number(req.params.id);
 
-    if (!Number.isInteger(id) || id < 1) {
-      return res.status(400).json({ error: 'Nieprawidłowy identyfikator.' });
-    }
-
-    const data = cleanRecord(moduleName, req.body);
-
-    if (moduleName === 'people' &&
-        (data.first_name !== undefined || data.last_name !== undefined)) {
-      const existing = db.prepare(
-        'SELECT first_name, last_name FROM people WHERE id = ?'
-      ).get(id);
-
-      if (!existing) {
-        return res.status(404).json({ error: 'Nie znaleziono wpisu.' });
+      if (!Number.isInteger(id) || id < 1) {
+        return res.status(400).json({
+          error: 'Nieprawidłowy identyfikator.'
+        });
       }
 
-      const firstName = data.first_name ?? existing.first_name;
-      const lastName = data.last_name ?? existing.last_name;
-      data.name = `${firstName} ${lastName}`.trim();
-    }
+      const data = cleanRecord(moduleName, req.body);
 
-    const columns = Object.keys(data);
+      if (
+        moduleName === 'people' &&
+        (data.first_name !== undefined ||
+         data.last_name !== undefined)
+      ) {
+        const existingResult = await pool.query(
+          'SELECT first_name, last_name FROM people WHERE id = $1',
+          [id]
+        );
 
-    if (!columns.length) {
-      return res.status(400).json({ error: 'Brak danych do zmiany.' });
-    }
+        const existing = existingResult.rows[0];
 
-    const result = db.prepare(`
-      UPDATE ${table}
-      SET ${columns.map(column => `${column} = ?`).join(', ')}
-      WHERE id = ?
-    `).run(...columns.map(column => data[column]), id);
+        if (!existing) {
+          return res.status(404).json({
+            error: 'Nie znaleziono wpisu.'
+          });
+        }
 
-    if (!result.changes) {
-      return res.status(404).json({ error: 'Nie znaleziono wpisu.' });
-    }
+        const firstName =
+          data.first_name ?? existing.first_name;
+        const lastName =
+          data.last_name ?? existing.last_name;
 
-    res.json(db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id));
-  }));
+        data.name = `${firstName} ${lastName}`.trim();
+      }
 
-  app.delete(`${endpoint}/:id`, requireLogin, asyncRoute((req, res) => {
-    const id = Number(req.params.id);
+      const columns = Object.keys(data);
 
-    if (!Number.isInteger(id) || id < 1) {
-      return res.status(400).json({ error: 'Nieprawidłowy identyfikator.' });
-    }
+      if (!columns.length) {
+        return res.status(400).json({
+          error: 'Brak danych do zmiany.'
+        });
+      }
 
-    const result = db.prepare(
-      `DELETE FROM ${table} WHERE id = ?`
-    ).run(id);
+      const assignments = columns
+        .map((column, index) => `${column} = $${index + 1}`)
+        .join(', ');
 
-    if (!result.changes) {
-      return res.status(404).json({ error: 'Nie znaleziono wpisu.' });
-    }
+      const values = columns.map(column => data[column]);
+      values.push(id);
 
-    res.json({ success: true });
-  }));
+      const result = await pool.query(
+        `UPDATE ${table}
+         SET ${assignments}
+         WHERE id = $${values.length}
+         RETURNING *`,
+        values
+      );
+
+      if (!result.rowCount) {
+        return res.status(404).json({
+          error: 'Nie znaleziono wpisu.'
+        });
+      }
+
+      res.json(result.rows[0]);
+    })
+  );
+
+  app.delete(
+    `${endpoint}/:id`,
+    requireLogin,
+    asyncRoute(async (req, res) => {
+      const id = Number(req.params.id);
+
+      if (!Number.isInteger(id) || id < 1) {
+        return res.status(400).json({
+          error: 'Nieprawidłowy identyfikator.'
+        });
+      }
+
+      const result = await pool.query(
+        `DELETE FROM ${table} WHERE id = $1`,
+        [id]
+      );
+
+      if (!result.rowCount) {
+        return res.status(404).json({
+          error: 'Nie znaleziono wpisu.'
+        });
+      }
+
+      res.json({ success: true });
+    })
+  );
 }
 
 // --------------------------------------------------
-// SPRAWDZANIE OBYWATELI I POWIĄZANE WPISY RP
+// SPRAWDZANIE OBYWATELI I POWIĄZANE WPISY
 // --------------------------------------------------
 
-app.get('/api/citizens/search', requireLogin, asyncRoute((req, res) => {
-  const query = cleanText(req.query.q, 100);
+app.get(
+  '/api/citizens/search',
+  requireLogin,
+  asyncRoute(async (req, res) => {
+    const query = cleanText(req.query.q, 100);
 
-  if (!query) {
-    return res.json([]);
-  }
+    if (!query) return res.json([]);
 
-  const results = db.prepare(`
-    SELECT * FROM people
-    WHERE name LIKE ?
-       OR first_name LIKE ?
-       OR last_name LIKE ?
-       OR pesel LIKE ?
-    ORDER BY id DESC
-    LIMIT 50
-  `).all(...Array(4).fill(`%${query}%`));
+    const pattern = `%${query}%`;
 
-  res.json(results);
-}));
+    const result = await pool.query(`
+      SELECT * FROM people
+      WHERE name ILIKE $1
+         OR first_name ILIKE $2
+         OR last_name ILIKE $3
+         OR pesel ILIKE $4
+      ORDER BY id DESC
+      LIMIT 50
+    `, [pattern, pattern, pattern, pattern]);
 
-app.get('/api/citizens/:id', requireLogin, asyncRoute((req, res) => {
-  const id = Number(req.params.id);
+    res.json(result.rows);
+  })
+);
 
-  if (!Number.isInteger(id) || id < 1) {
-    return res.status(400).json({ error: 'Nieprawidłowy identyfikator.' });
-  }
+app.get(
+  '/api/citizens/:id',
+  requireLogin,
+  asyncRoute(async (req, res) => {
+    const id = Number(req.params.id);
 
-  const person = db.prepare(
-    'SELECT * FROM people WHERE id = ?'
-  ).get(id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({
+        error: 'Nieprawidłowy identyfikator.'
+      });
+    }
 
-  if (!person) {
-    return res.status(404).json({ error: 'Nie znaleziono obywatela.' });
-  }
+    const personResult = await pool.query(
+      'SELECT * FROM people WHERE id = $1',
+      [id]
+    );
 
-  const citations = db.prepare(`
-    SELECT * FROM citations
-    WHERE person_id = ? OR person = ?
-    ORDER BY id DESC
-  `).all(id, person.name);
+    const person = personResult.rows[0];
 
-  const vehicles = db.prepare(`
-    SELECT * FROM vehicles
-    WHERE person_id = ? OR owner = ?
-    ORDER BY id DESC
-  `).all(id, person.name);
+    if (!person) {
+      return res.status(404).json({
+        error: 'Nie znaleziono obywatela.'
+      });
+    }
 
-  const reports = db.prepare(`
-    SELECT * FROM reports
-    WHERE person_id = ?
-    ORDER BY id DESC
-  `).all(id);
+    const [citations, vehicles, reports] = await Promise.all([
+      pool.query(
+        `SELECT * FROM citations
+         WHERE person_id = $1 OR person = $2
+         ORDER BY id DESC`,
+        [id, person.name]
+      ),
 
-  res.json({ person, citations, vehicles, reports });
-}));
+      pool.query(
+        `SELECT * FROM vehicles
+         WHERE person_id = $1 OR owner = $2
+         ORDER BY id DESC`,
+        [id, person.name]
+      ),
+
+      pool.query(
+        `SELECT * FROM reports
+         WHERE person_id = $1
+         ORDER BY id DESC`,
+        [id]
+      )
+    ]);
+
+    res.json({
+      person,
+      citations: citations.rows,
+      vehicles: vehicles.rows,
+      reports: reports.rows
+    });
+  })
+);
 
 // --------------------------------------------------
 // ZARZĄDZANIE DOSTĘPAMI — TYLKO KOMENDANTURA
 // --------------------------------------------------
 
 const allowedRanks = [
-  "Posterunkowy",
-  "Starszy posterunkowy",
-  "Sierżant",
-  "Starszy sierżant",
-  "Sierżant sztabowy",
-  "Młodszy aspirant",
-  "Aspirant",
-  "Starszy aspirant",
-  "Aspirant sztabowy",
-  "Podkomisarz",
-  "Komisarz",
-  "Nadkomisarz",
-  "Podinspektor",
-  "Młodszy inspektor",
-  "Inspektor",
-  "Nadinspektor",
-  "Generalny inspektor"
+  'Posterunkowy',
+  'Starszy posterunkowy',
+  'Sierżant',
+  'Starszy sierżant',
+  'Sierżant sztabowy',
+  'Młodszy aspirant',
+  'Aspirant',
+  'Starszy aspirant',
+  'Aspirant sztabowy',
+  'Podkomisarz',
+  'Komisarz',
+  'Nadkomisarz',
+  'Podinspektor',
+  'Młodszy inspektor',
+  'Inspektor',
+  'Nadinspektor',
+  'Generalny inspektor'
 ];
 
-app.get('/api/users', requireLogin, requireAdmin, (req, res) => {
-  const users = db.prepare(`
-    SELECT
-      id, username, display_name, badge, rank,
-      department, role_group, active, created_at
-    FROM users
-    ORDER BY id ASC
-  `).all();
+app.get(
+  '/api/users',
+  requireLogin,
+  requireAdmin,
+  asyncRoute(async (req, res) => {
+    const result = await pool.query(`
+      SELECT id, username, display_name, badge, rank,
+             department, role_group, active, created_at
+      FROM users
+      ORDER BY id ASC
+    `);
 
-  res.json(users);
-});
+    res.json(result.rows);
+  })
+);
 
-app.post('/api/users', requireLogin, requireAdmin, asyncRoute(async (req, res) => {
-  const username = cleanText(req.body.username, 40).toLowerCase();
-  const password = String(req.body.password || '');
-  const displayName = cleanText(req.body.display_name, 100);
-  const badge = cleanText(req.body.badge, 30);
-  const rank = cleanText(req.body.rank, 60);
+app.post(
+  '/api/users',
+  requireLogin,
+  requireAdmin,
+  asyncRoute(async (req, res) => {
+    const username =
+      cleanText(req.body.username, 40).toLowerCase();
 
-  if (!/^[a-z0-9_.-]{3,40}$/.test(username)) {
-    return res.status(400).json({ error: 'Nieprawidłowy login.' });
-  }
+    const password = String(req.body.password || '');
+    const displayName =
+      cleanText(req.body.display_name, 100);
+    const badge = cleanText(req.body.badge, 30);
+    const rank = cleanText(req.body.rank, 60);
 
-  if (password.length < 12) {
-    return res.status(400).json({
-      error: 'Hasło musi mieć co najmniej 12 znaków.'
-    });
-  }
+    if (!/^[a-z0-9_.-]{3,40}$/.test(username)) {
+      return res.status(400).json({
+        error: 'Nieprawidłowy login.'
+      });
+    }
 
-  if (!allowedRanks.includes(rank)) {
-    return res.status(400).json({ error: 'Nieprawidłowy stopień.' });
-  }
+    if (password.length < 12) {
+      return res.status(400).json({
+        error: 'Hasło musi mieć co najmniej 12 znaków.'
+      });
+    }
 
-  const passwordHash = await bcrypt.hash(password, 12);
+    if (!allowedRanks.includes(rank)) {
+      return res.status(400).json({
+        error: 'Nieprawidłowy stopień.'
+      });
+    }
 
-  try {
-    const result = db.prepare(`
-      INSERT INTO users
-      (username, password_hash, display_name, badge, rank, department, role_group, active)
-      VALUES (?, ?, ?, ?, ?, 'KPP Lubin', 'Funkcjonariusz', 1)
-    `).run(
-      username,
-      passwordHash,
-      displayName || username,
-      badge,
-      rank
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    try {
+      const result = await pool.query(`
+        INSERT INTO users
+        (username, password_hash, display_name, badge, rank,
+         department, role_group, active)
+        VALUES ($1, $2, $3, $4, $5,
+                'KPP Lubin', 'Funkcjonariusz', 1)
+        RETURNING id, username, display_name, badge, rank,
+                  department, role_group, active
+      `, [
+        username,
+        passwordHash,
+        displayName || username,
+        badge,
+        rank
+      ]);
+
+      res.status(201).json(result.rows[0]);
+
+    } catch (error) {
+      if (error.code === '23505') {
+        return res.status(409).json({
+          error: 'Ten login jest już zajęty.'
+        });
+      }
+
+      throw error;
+    }
+  })
+);
+
+app.patch(
+  '/api/users/:id/active',
+  requireLogin,
+  requireAdmin,
+  asyncRoute(async (req, res) => {
+    const id = Number(req.params.id);
+    const active = req.body.active;
+
+    if (
+      !Number.isInteger(id) ||
+      id < 1 ||
+      typeof active !== 'boolean'
+    ) {
+      return res.status(400).json({
+        error: 'Nieprawidłowe dane.'
+      });
+    }
+
+    if (id === req.session.user.id && !active) {
+      return res.status(400).json({
+        error: 'Nie możesz dezaktywować własnego konta.'
+      });
+    }
+
+    const result = await pool.query(
+      'UPDATE users SET active = $1 WHERE id = $2',
+      [active ? 1 : 0, id]
     );
 
-    const created = db.prepare(`
-      SELECT id, username, display_name, badge, rank,
-             department, role_group, active
-      FROM users WHERE id = ?
-    `).get(result.lastInsertRowid);
-
-    res.status(201).json(created);
-  } catch (error) {
-    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-      return res.status(409).json({ error: 'Ten login jest już zajęty.' });
+    if (!result.rowCount) {
+      return res.status(404).json({
+        error: 'Nie znaleziono konta.'
+      });
     }
-    throw error;
-  }
-}));
 
-app.patch('/api/users/:id/active', requireLogin, requireAdmin, (req, res) => {
-  const id = Number(req.params.id);
-  const active = req.body.active;
+    res.json({ success: true });
+  })
+);
 
-  if (!Number.isInteger(id) || id < 1 || typeof active !== 'boolean') {
-    return res.status(400).json({ error: 'Nieprawidłowe dane.' });
-  }
+app.delete(
+  '/api/users/:id',
+  requireLogin,
+  requireAdmin,
+  asyncRoute(async (req, res) => {
+    const id = Number(req.params.id);
 
-  if (id === req.session.user.id && !active) {
-    return res.status(400).json({
-      error: 'Nie możesz dezaktywować własnego konta.'
-    });
-  }
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).json({
+        error: 'Nieprawidłowy identyfikator.'
+      });
+    }
 
-  const result = db.prepare(
-    'UPDATE users SET active = ? WHERE id = ?'
-  ).run(active ? 1 : 0, id);
+    if (id === req.session.user.id) {
+      return res.status(400).json({
+        error: 'Nie możesz usunąć własnego konta.'
+      });
+    }
 
-  if (!result.changes) {
-    return res.status(404).json({ error: 'Nie znaleziono konta.' });
-  }
+    const userResult = await pool.query(
+      'SELECT role_group FROM users WHERE id = $1',
+      [id]
+    );
 
-  res.json({ success: true });
-});
+    const user = userResult.rows[0];
 
-app.delete('/api/users/:id', requireLogin, requireAdmin, (req, res) => {
-  const id = Number(req.params.id);
+    if (!user) {
+      return res.status(404).json({
+        error: 'Nie znaleziono konta.'
+      });
+    }
 
-  if (!Number.isInteger(id) || id < 1) {
-    return res.status(400).json({ error: 'Nieprawidłowy identyfikator.' });
-  }
+    if (user.role_group === 'Komendantura') {
+      return res.status(403).json({
+        error: 'Nie można usunąć konta Komendantury.'
+      });
+    }
 
-  if (id === req.session.user.id) {
-    return res.status(400).json({
-      error: 'Nie możesz usunąć własnego konta.'
-    });
-  }
+    await pool.query(
+      'DELETE FROM users WHERE id = $1',
+      [id]
+    );
 
-  const user = db.prepare(
-    'SELECT role_group FROM users WHERE id = ?'
-  ).get(id);
-
-  if (!user) {
-    return res.status(404).json({ error: 'Nie znaleziono konta.' });
-  }
-
-  if (user.role_group === 'Komendantura') {
-    return res.status(403).json({
-      error: 'Nie można usunąć konta Komendantury.'
-    });
-  }
-
-  db.prepare('DELETE FROM users WHERE id = ?').run(id);
-  res.json({ success: true });
-});
+    res.json({ success: true });
+  })
+);
 
 // --------------------------------------------------
-// PLIKI STRONY
+// PLIKI STRONY I OBSŁUGA BŁĘDÓW
 // --------------------------------------------------
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -845,16 +1026,52 @@ app.get('/', (req, res) => {
 
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) {
-    return res.status(404).json({ error: 'Nie znaleziono endpointu.' });
+    return res.status(404).json({
+      error: 'Nie znaleziono endpointu.'
+    });
   }
 
   res.status(404).send('Nie znaleziono strony.');
+});
+
+app.use((error, req, res, next) => {
+  console.error('Błąd serwera:', error);
+
+  if (res.headersSent) return next(error);
+
+  res.status(500).json({
+    error: 'Wystąpił błąd serwera.'
+  });
 });
 
 // --------------------------------------------------
 // START SERWERA
 // --------------------------------------------------
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Bluebird MDT działa na porcie ${PORT}`);
+async function start() {
+  try {
+    await pool.query('SELECT 1');
+    await initializeDatabase();
+
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(
+        `Bluebird MDT działa na porcie ${PORT} i korzysta z PostgreSQL.`
+      );
+    });
+
+  } catch (error) {
+    console.error(
+      'Nie udało się połączyć z PostgreSQL lub przygotować bazy:',
+      error
+    );
+
+    process.exit(1);
+  }
+}
+
+start();
+
+process.on('SIGTERM', async () => {
+  await pool.end();
+  process.exit(0);
 });
