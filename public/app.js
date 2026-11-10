@@ -998,13 +998,14 @@ dispatchStyle.textContent = `
   }
 
   .dispatch-card {
-    background:rgba(20,35,52,.9);
-    border:1px solid #40546b;
+    background:#ffffff;
+    color:#172b46;
+    border:1px solid #dce4ef;
     border-radius:10px;
     padding:14px;
   }
 
-  .dispatch-card h3 { margin-top:0; }
+  .dispatch-card h2, .dispatch-card h3 { margin-top:0; color:#304b6d; }
 
   .dispatch-card label {
     display:block;
@@ -1019,8 +1020,8 @@ dispatchStyle.textContent = `
     padding:10px;
     border-radius:6px;
     border:1px solid #526477;
-    background:#101c2a;
-    color:#fff;
+    background:#ffffff;
+    color:#172b46;
   }
 
   .dispatch-card textarea {
@@ -1035,24 +1036,25 @@ dispatchStyle.textContent = `
     margin:12px 0;
   }
 
-  .dispatch-intervention p { overflow-wrap:anywhere; }
+  .dispatch-intervention p { overflow-wrap:anywhere; color:#536982; }
 
   .dispatch-status {
     display:inline-block;
     padding:5px 9px;
     border-radius:6px;
-    background:#263c53;
+    background:#eaf3ff;
+    color:#1765bd;
     margin:4px 0;
   }
 
   .dispatch-history {
-    border-left:2px solid #526477;
+    border-left:2px solid #b8d3f1;
     padding-left:12px;
     margin:12px 0;
   }
 
   .dispatch-muted {
-    opacity:.75;
+    color:#75869c;
     font-size:.9em;
   }
 
