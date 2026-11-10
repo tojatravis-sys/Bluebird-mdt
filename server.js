@@ -1413,11 +1413,12 @@ app.patch(
 
       let finalStatus = status || current.status;
 
+      // Samo wybranie patrolu w formularzu automatycznie
+      // zmienia oczekiwanie na status "Przydzielona".
       if (
         hasUnitChange &&
         newUnitId !== null &&
-        current.status === 'Oczekuje na przydział' &&
-        !status
+        finalStatus === 'Oczekuje na przydział'
       ) {
         finalStatus = 'Przydzielona';
       }
