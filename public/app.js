@@ -733,4 +733,566 @@ document.querySelectorAll("[data-page]").forEach(button => {
   });
 });
 
+// ==================================================
+// TABLET DYŻURNEGO + INTERWENCJE + POWIADOMIENIA
+// ==================================================
+
+const dispatchStyle = document.createElement("style");
+dispatchStyle.textContent = `
+  .dispatch-wrap { display:grid; gap:16px; }
+  .dispatch-nav { display:flex; flex-wrap:wrap; gap:8px; }
+  .dispatch-nav button, .dispatch-action {
+    border:1px solid #526477; border-radius:8px; padding:10px 14px;
+    background:#172536; color:#fff; cursor:pointer;
+  }
+  .dispatch-nav button.active, .dispatch-action.primary {
+    background:#1765a5; border-color:#268bd2;
+  }
+  .dispatch-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+  .dispatch-card { background:rgba(20,35,52,.9); border:1px solid #40546b; border-radius:10px; padding:14px; }
+  .dispatch-card h3 { margin-top:0; }
+  .dispatch-card label { display:block; margin:10px 0 5px; }
+  .dispatch-card input, .dispatch-card textarea, .dispatch-card select {
+    width:100%; box-sizing:border-box; padding:10px; border-radius:6px;
+    border:1px solid #526477; background:#101c2a; color:#fff;
+  }
+  .dispatch-card textarea { min-height:90px; resize:vertical; }
+  .dispatch-intervention { border:1px solid #40546b; border-radius:10px; padding:14px; margin:12px 0; }
+  .dispatch-intervention p { overflow-wrap:anywhere; }
+  .dispatch-status { display:inline-block; padding:5px 9px; border-radius:6px; background:#263c53; margin:4px 0; }
+  .dispatch-history { border-left:2px solid #526477; padding-left:12px; margin:12px 0; }
+  .dispatch-muted { opacity:.75; font-size:.9em; }
+  .dispatch-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; }
+  .dispatch-toolbar button { padding:9px 12px; }
+  .dispatch-unit { padding:10px; border:1px solid #40546b; border-radius:8px; margin:7px 0; }
+  .dispatch-empty { padding:18px; text-align:center; opacity:.75; }
+  @media(max-width:600px) {
+    .dispatch-card, .dispatch-intervention { padding:11px; }
+    .dispatch-nav button { flex:1 1 100%; }
+  }
+`;
+document.head.appendChild(dispatchStyle);
+
+let dispatchRefreshTimer = null;
+let notificationTimer = null;
+let knownInterventionIds = null;
+let notificationAudioContext = null;
+
+const dispatchStatuses = [
+  "Oczekuje na przydział",
+  "Przydzielona",
+  "W drodze",
+  "Na miejscu",
+  "Zakończona"
+];
+
+const dispatchPriorities = ["Niski", "Normalny", "Wysoki", "Pilny"];
+
+function dispatchDate(value) {
+  if (!value) return "Brak danych";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "Brak danych"
+    : date.toLocaleString("pl-PL");
+}
+
+function dispatchNav(active) {
+  return `
+    <div class="dispatch-nav">
+      <button type="button" data-dispatch-page="interventions"
+        class="${active === "interventions" ? "active" : ""}">
+        INTERWENCJE
+      </button>
+      <button type="button" data-dispatch-page="units"
+        class="${active === "units" ? "active" : ""}">
+        PATROLE
+      </button>
+      <button type="button" data-dispatch-page="history"
+        class="${active === "history" ? "active" : ""}">
+        HISTORIA
+      </button>
+    </div>
+  `;
+}
+
+function bindDispatchNav() {
+  document.querySelectorAll("[data-dispatch-page]").forEach(button => {
+    button.addEventListener("click", () => {
+      renderDispatchPage(button.dataset.dispatchPage);
+    });
+  });
+}
+
+async function renderDispatchPage(page = "interventions") {
+  if (!isDispatcher()) return;
+
+  state.currentPage = "dispatch";
+
+  document.querySelectorAll("[data-page]").forEach(button => {
+    button.classList.remove("active");
+    button.classList.add("hidden");
+  });
+
+  if (page === "units") {
+    await renderDispatchUnits();
+  } else if (page === "history") {
+    await renderDispatchHistory();
+  } else {
+    await renderDispatchInterventions();
+  }
+}
+
+async function renderDispatchInterventions() {
+  contentArea.innerHTML = `
+    <div class="section-title">TABLET DYŻURNEGO</div>
+    <div class="dispatch-wrap">
+      ${dispatchNav("interventions")}
+      <section class="dispatch-card">
+        <div class="dispatch-toolbar">
+          <h2>NOWA INTERWENCJA</h2>
+          <button type="button" id="dispatchRefresh" class="dispatch-action">ODŚWIEŻ</button>
+        </div>
+        <form id="newInterventionForm">
+          <label>Adres zdarzenia *</label>
+          <input name="address" maxlength="300" required placeholder="Ulica, numer, miejscowość">
+
+          <label>Osoba zgłaszająca</label>
+          <input name="reporter" maxlength="150" placeholder="Dane zgłaszającego">
+
+          <label>Opis zdarzenia *</label>
+          <textarea name="description" maxlength="5000" required placeholder="Opis zgłoszenia"></textarea>
+
+          <label>Priorytet</label>
+          <select name="priority">
+            ${dispatchPriorities.map(p => `<option value="${p}" ${p === "Normalny" ? "selected" : ""}>${p}</option>`).join("")}
+          </select>
+
+          <label>Przydziel patrol (opcjonalnie)</label>
+          <select name="unit_id" id="newInterventionUnit">
+            <option value="">Bez przydziału — oczekuje</option>
+          </select>
+
+          <button class="dispatch-action primary" type="submit">UTWÓRZ INTERWENCJĘ</button>
+        </form>
+      </section>
+
+      <section class="dispatch-card">
+        <h2>AKTUALNE INTERWENCJE</h2>
+        <div id="dispatchInterventionList">Ładowanie...</div>
+      </section>
+    </div>
+  `;
+
+  bindDispatchNav();
+
+  $("#dispatchRefresh").addEventListener("click", () => {
+    renderDispatchInterventions();
+  });
+
+  try {
+    const [interventions, units] = await Promise.all([
+      api("/api/interventions"),
+      api("/api/units")
+    ]);
+
+    const availableUnits = units.filter(unit => unit.status === "Dostępny");
+    $("#newInterventionUnit").innerHTML =
+      `<option value="">Bez przydziału — oczekuje</option>` +
+      availableUnits.map(unit => `
+        <option value="${unit.id}">
+          ${escapeHtml(unit.callsign)} — ${escapeHtml(unit.officers || "Brak danych")}
+        </option>
+      `).join("");
+
+    $("#dispatchInterventionList").innerHTML = interventions.length
+      ? interventions.map(renderInterventionCard).join("")
+      : `<div class="dispatch-empty">Brak zarejestrowanych interwencji.</div>`;
+
+    bindInterventionActions();
+  } catch (error) {
+    $("#dispatchInterventionList").innerHTML =
+      `<p>Błąd pobierania danych: ${escapeHtml(error.message)}</p>`;
+  }
+
+  $("#newInterventionForm").addEventListener("submit", async event => {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+
+    try {
+      await api("/api/interventions", {
+        method: "POST",
+        body: JSON.stringify({
+          address: form.elements.address.value.trim(),
+          reporter: form.elements.reporter.value.trim(),
+          description: form.elements.description.value.trim(),
+          priority: form.elements.priority.value,
+          unit_id: form.elements.unit_id.value || null
+        })
+      });
+
+      showMessage("Utworzono interwencję.");
+      await renderDispatchInterventions();
+    } catch (error) {
+      showMessage(error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+function renderInterventionCard(item) {
+  const history = Array.isArray(item.history) ? item.history : [];
+
+  return `
+    <article class="dispatch-intervention">
+      <div class="dispatch-toolbar">
+        <h3>${escapeHtml(item.incident_number || `INT-${item.id}`)}</h3>
+        <span class="dispatch-status">${escapeHtml(item.status)}</span>
+      </div>
+
+      <p><strong>Adres:</strong> ${escapeHtml(item.address)}</p>
+      <p><strong>Zgłaszający:</strong> ${escapeHtml(item.reporter || "Nie podano")}</p>
+      <p><strong>Opis:</strong> ${escapeHtml(item.description)}</p>
+      <p><strong>Priorytet:</strong> ${escapeHtml(item.priority)}</p>
+      <p><strong>Patrol:</strong> ${escapeHtml(item.unit_callsign || item.callsign || "Nieprzydzielony")}</p>
+      <p class="dispatch-muted">Utworzono: ${escapeHtml(dispatchDate(item.created_at))}</p>
+
+      <div class="dispatch-grid">
+        <div>
+          <label>Status</label>
+          <select data-intervention-status="${item.id}">
+            ${dispatchStatuses.map(status => `
+              <option value="${status}" ${item.status === status ? "selected" : ""}>
+                ${status}
+              </option>
+            `).join("")}
+          </select>
+        </div>
+        <div>
+          <label>Przydziel patrol</label>
+          <select data-intervention-unit="${item.id}">
+            <option value="">Bez patrolu</option>
+          </select>
+        </div>
+      </div>
+
+      <button type="button" class="dispatch-action primary"
+        data-save-intervention="${item.id}">
+        ZAPISZ ZMIANY
+      </button>
+
+      ${history.length ? `
+        <details>
+          <summary>Historia interwencji (${history.length})</summary>
+          ${history.map(entry => `
+            <div class="dispatch-history">
+              <strong>${escapeHtml(entry.event)}</strong>
+              <p>${escapeHtml(entry.details || "")}</p>
+              <small>${escapeHtml(entry.actor_name || "System")} — ${escapeHtml(dispatchDate(entry.created_at))}</small>
+            </div>
+          `).join("")}
+        </details>
+      ` : ""}
+    </article>
+  `;
+}
+
+async function bindInterventionActions() {
+  try {
+    const units = await api("/api/units");
+
+    document.querySelectorAll("[data-intervention-unit]").forEach(select => {
+      const interventionId = select.dataset.interventionUnit;
+      const intervention = state.records.interventions?.find(
+        item => String(item.id) === String(interventionId)
+      );
+
+      const currentUnitId = intervention?.unit_id;
+
+      const options = units.filter(unit =>
+        unit.status === "Dostępny" || String(unit.id) === String(currentUnitId)
+      );
+
+      select.innerHTML = `<option value="">Bez patrolu</option>` +
+        options.map(unit => `
+          <option value="${unit.id}" ${String(unit.id) === String(currentUnitId) ? "selected" : ""}>
+            ${escapeHtml(unit.callsign)} — ${escapeHtml(unit.officers || "Brak danych")}
+            (${escapeHtml(unit.status)})
+          </option>
+        `).join("");
+    });
+
+    document.querySelectorAll("[data-save-intervention]").forEach(button => {
+      button.addEventListener("click", async () => {
+        const id = button.dataset.saveIntervention;
+        const status = document.querySelector(`[data-intervention-status="${id}"]`).value;
+        const unitId = document.querySelector(`[data-intervention-unit="${id}"]`).value;
+
+        button.disabled = true;
+
+        try {
+          await api(`/api/interventions/${id}`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              status,
+              unit_id: unitId || null
+            })
+          });
+
+          showMessage("Zapisano zmiany interwencji.");
+          await renderDispatchInterventions();
+        } catch (error) {
+          showMessage(error.message, true);
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+  } catch (error) {
+    showMessage("Nie udało się pobrać patroli: " + error.message, true);
+  }
+}
+
+async function renderDispatchUnits() {
+  contentArea.innerHTML = `
+    <div class="section-title">TABLET DYŻURNEGO</div>
+    <div class="dispatch-wrap">
+      ${dispatchNav("units")}
+      <section class="dispatch-card">
+        <div class="dispatch-toolbar">
+          <h2>STAN PATROLI</h2>
+          <button type="button" id="dispatchUnitsRefresh" class="dispatch-action">ODŚWIEŻ</button>
+        </div>
+        <div id="dispatchUnitsList">Ładowanie...</div>
+      </section>
+    </div>
+  `;
+
+  bindDispatchNav();
+
+  async function loadUnits() {
+    const units = await api("/api/units");
+
+    $("#dispatchUnitsList").innerHTML = units.length
+      ? units.map(unit => `
+        <div class="dispatch-unit">
+          <strong>${escapeHtml(unit.callsign)}</strong>
+          <span class="dispatch-status">${escapeHtml(unit.status)}</span>
+          <p>Funkcjonariusze: ${escapeHtml(unit.officers || "Brak danych")}</p>
+          <p>Rejon: ${escapeHtml(unit.area || "Nie określono")}</p>
+          <p>Pojazd: ${escapeHtml(unit.vehicle || "Nie określono")}</p>
+        </div>
+      `).join("")
+      : "<p>Brak zarejestrowanych patroli.</p>";
+  }
+
+  $("#dispatchUnitsRefresh").addEventListener("click", () => {
+    loadUnits().catch(error => showMessage(error.message, true));
+  });
+
+  try {
+    await loadUnits();
+  } catch (error) {
+    $("#dispatchUnitsList").textContent = error.message;
+  }
+}
+
+async function renderDispatchHistory() {
+  contentArea.innerHTML = `
+    <div class="section-title">TABLET DYŻURNEGO</div>
+    <div class="dispatch-wrap">
+      ${dispatchNav("history")}
+      <section class="dispatch-card">
+        <h2>HISTORIA INTERWENCJI</h2>
+        <div id="dispatchHistoryList">Ładowanie...</div>
+      </section>
+    </div>
+  `;
+
+  bindDispatchNav();
+
+  try {
+    const interventions = await api("/api/interventions");
+    const completed = interventions.filter(item => item.status === "Zakończona");
+
+    $("#dispatchHistoryList").innerHTML = completed.length
+      ? completed.map(item => `
+        <div class="dispatch-intervention">
+          <strong>${escapeHtml(item.incident_number || `INT-${item.id}`)}</strong>
+          <p>Adres: ${escapeHtml(item.address)}</p>
+          <p>Opis: ${escapeHtml(item.description)}</p>
+          <p>Patrol: ${escapeHtml(item.unit_callsign || item.callsign || "Nieprzydzielony")}</p>
+          <p>Zakończono / zmieniono: ${escapeHtml(dispatchDate(item.updated_at))}</p>
+          <details>
+            <summary>Pokaż historię zmian</summary>
+            ${(item.history || []).map(entry => `
+              <div class="dispatch-history">
+                <strong>${escapeHtml(entry.event)}</strong>
+                <p>${escapeHtml(entry.details || "")}</p>
+                <small>${escapeHtml(entry.actor_name || "System")} — ${escapeHtml(dispatchDate(entry.created_at))}</small>
+              </div>
+            `).join("")}
+          </details>
+        </div>
+      `).join("")
+      : `<div class="dispatch-empty">Nie ma jeszcze zakończonych interwencji.</div>`;
+  } catch (error) {
+    $("#dispatchHistoryList").textContent = error.message;
+  }
+}
+
+// --------------------------------------------------
+// POWIADOMIENIA DLA FUNKCJONARIUSZA
+// --------------------------------------------------
+
+function enableNotificationSound() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    if (!notificationAudioContext) {
+      notificationAudioContext = new AudioContextClass();
+    }
+
+    if (notificationAudioContext.state === "suspended") {
+      notificationAudioContext.resume();
+    }
+  } catch {
+    // Dźwięk jest opcjonalny.
+  }
+}
+
+function playInterventionSound() {
+  try {
+    if (!notificationAudioContext) return;
+
+    const context = notificationAudioContext;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+
+    oscillator.type = "sine";
+    oscillator.frequency.value = 880;
+    gain.gain.value = 0.12;
+
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.35);
+  } catch {
+    // Brak obsługi audio nie blokuje działania systemu.
+  }
+}
+
+document.addEventListener("pointerdown", enableNotificationSound, { once: true });
+
+async function checkMyInterventions() {
+  if (!state.user || isDispatcher()) return;
+
+  try {
+    const interventions = await api("/api/interventions/mine");
+    const currentIds = new Set(interventions.map(item => String(item.id)));
+
+    if (knownInterventionIds === null) {
+      knownInterventionIds = currentIds;
+      return;
+    }
+
+    const newAssignments = interventions.filter(item =>
+      !knownInterventionIds.has(String(item.id))
+    );
+
+    if (newAssignments.length) {
+      playInterventionSound();
+      showMessage(
+        `Nowa interwencja dla Twojego patrolu: ${newAssignments.map(item => item.incident_number || `INT-${item.id}`).join(", ")}`
+      );
+    }
+
+    knownInterventionIds = currentIds;
+  } catch {
+    // Brak połączenia nie przerywa pracy panelu.
+  }
+}
+
+function startInterventionNotifications() {
+  if (notificationTimer) clearInterval(notificationTimer);
+  knownInterventionIds = null;
+
+  if (!isDispatcher()) {
+    checkMyInterventions();
+    notificationTimer = setInterval(checkMyInterventions, 12000);
+  }
+}
+
+// --------------------------------------------------
+// NOWE PRZEŁĄCZANIE WIDOKÓW PO ZALOGOWANIU
+// --------------------------------------------------
+
+async function openPage(page) {
+  if (!state.user) return;
+
+  if (isDispatcher()) {
+    await renderDispatchPage("interventions");
+    return;
+  }
+
+  if (page === "users" && !isAdmin()) {
+    showMessage("Brak uprawnień.", true);
+    return;
+  }
+
+  state.currentPage = page;
+
+  document.querySelectorAll("[data-page]").forEach(button => {
+    button.classList.remove("hidden");
+    button.classList.toggle("active", button.dataset.page === page);
+  });
+
+  if (page === "summary") {
+    await renderSummary();
+  } else if (page === "citizenSearch") {
+    renderCitizenSearch();
+  } else if (page === "users") {
+    await renderUsers();
+  } else if (modules[page]) {
+    await renderModule(page);
+  }
+}
+
+async function startApp() {
+  hideScreens();
+
+  try {
+    const status = await api("/api/status");
+
+    if (status.needsSetup) {
+      showScreen("setupScreen");
+      return;
+    }
+
+    const result = await api("/api/me");
+
+    if (result && result.id) {
+      state.user = result;
+      updateUserPanel();
+      showScreen("dashboardScreen");
+
+      startInterventionNotifications();
+      await openPage("summary");
+      return;
+    }
+
+    state.user = null;
+    showScreen("loginScreen");
+  } catch (error) {
+    state.user = null;
+    showScreen("loginScreen");
+  }
+}
+
+// Ponowne uruchomienie aplikacji z nową obsługą ról.
 startApp();
