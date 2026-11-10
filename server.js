@@ -676,7 +676,7 @@ for (const [moduleName, config] of Object.entries(modules)) {
       if (search && moduleName !== 'units') {
         const fields = searchableFields[moduleName];
         const where = fields
-          .map((field, index) => `${field} ILIKE ${index + 1}`)
+          .map((field, index) => `${field} ILIKE $${index + 1}`)
           .join(' OR ');
 
         result = await pool.query(
