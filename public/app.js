@@ -893,9 +893,9 @@ async function renderDispatchInterventions() {
     const [interventions, units] = await Promise.all([
       api("/api/interventions"),
       api("/api/units")
-      state.records.interventions = interventions;
     ]);
-
+    state.records.interventions = interventions;
+    
     const availableUnits = units.filter(unit => unit.status === "Dostępny");
     $("#newInterventionUnit").innerHTML =
       `<option value="">Bez przydziału — oczekuje</option>` +
