@@ -382,8 +382,14 @@ app.get('/api/summary', requireLogin, requireFunctionary, asyncRoute(async (req,
 for (const [moduleName, config] of Object.entries(modules)) {
   const endpoint = `/api/${moduleName}`;
   const table = config.table;
-  const roleGuard = moduleName === 'units' ? ((req,res,next) => next()) : requireFunctionary;
-
+const roleGuard = moduleName === 'units'
+  ? ((req, res, next) => {
+      if (req.session.user?.roleGroup === 'DYŻURNY' && req.method !== 'GET') {
+        return res.status(403).json({ error: 'Dyżurny może tylko przeglądać patrole.' });
+      }
+      next();
+    })
+  : requireFunctionary;
   app.get(endpoint, requireLogin, roleGuard, asyncRoute(async (req, res) => {
     const search = cleanText(req.query.q, 100);
     let result;
