@@ -1,95 +1,316 @@
+
 <!DOCTYPE html>
 <html lang="pl">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#101b20">
-  <title>BLUEBIRD MDT | KPP Lubin</title>
+  <meta name="description" content="Bluebird - system służbowy KPP Lubin">
+  <title>BLUEBIRD | KPP Lubin</title>
   <link rel="stylesheet" href="/style.css">
 </head>
+
 <body>
+
+  <!-- EKRAN URUCHAMIANIA -->
+  <div id="bootScreen" class="boot-screen">
+    <div class="boot-content">
+      <div class="boot-logo">BLUEBIRD</div>
+      <div class="boot-subtitle">KOMENDA POWIATOWA POLICJI</div>
+      <div class="boot-location">LUBIN</div>
+
+      <div id="bootStatus" class="boot-status">
+        URUCHAMIANIE SYSTEMU...
+      </div>
+
+      <div class="boot-progress">
+        <div id="bootProgressBar"></div>
+      </div>
+
+      <div class="boot-author">
+        Strona autorstwa Hubert.77
+      </div>
+    </div>
+  </div>
+
+  <!-- URZĄDZENIE -->
   <main class="device">
+
     <div class="device-top">
       <div class="camera"></div>
       <div class="brand">BLUEBIRD</div>
-      <div class="device-subtitle">MOBILE DATA TERMINAL</div>
+      <div class="device-subtitle">POLICE INFORMATION SYSTEM</div>
     </div>
 
     <div class="screen">
+
+      <!-- NAGŁÓWEK -->
       <header class="app-header">
         <div class="app-logo">BLUEBIRD</div>
         <div class="app-unit">KOMENDA POWIATOWA POLICJI</div>
         <div class="app-location">LUBIN</div>
       </header>
 
+      <!-- KOMUNIKATY -->
       <div id="message" class="message hidden"></div>
 
+      <!-- LOGOWANIE -->
       <section id="loginScreen" class="screen-section hidden">
         <div class="section-title">LOGOWANIE</div>
-        <p class="muted">Wprowadź dane dostępowe funkcjonariusza.</p>
+
+        <p class="muted">
+          Wprowadź dane dostępowe funkcjonariusza.
+        </p>
+
         <form id="loginForm">
-          <label for="loginUsername">IDENTYFIKATOR</label>
-          <input id="loginUsername" name="username" autocomplete="username" required>
 
-          <label for="loginPassword">HASŁO</label>
-          <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+          <label for="loginUsername">
+            IDENTYFIKATOR
+          </label>
 
-          <button class="primary-button" type="submit">ZALOGUJ</button>
+          <input
+            id="loginUsername"
+            name="username"
+            type="text"
+            autocomplete="username"
+            required
+          >
+
+          <label for="loginPassword">
+            HASŁO
+          </label>
+
+          <input
+            id="loginPassword"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            required
+          >
+
+          <button class="primary-button" type="submit">
+            ZALOGUJ
+          </button>
+
         </form>
       </section>
 
+      <!-- PIERWSZA KONFIGURACJA -->
       <section id="setupScreen" class="screen-section hidden">
-        <div class="section-title">PIERWSZA KONFIGURACJA</div>
-        <p class="muted">Utwórz główne konto Komendantury.</p>
+
+        <div class="section-title">
+          PIERWSZA KONFIGURACJA
+        </div>
+
+        <p class="muted">
+          Utwórz główne konto Komendantury.
+        </p>
 
         <form id="setupForm">
-          <label for="setupUsername">LOGIN KOMENDANTURY</label>
-          <input id="setupUsername" name="username" autocomplete="username" required minlength="3">
 
-          <label for="setupPassword">NOWE HASŁO</label>
-          <input id="setupPassword" name="password" type="password" autocomplete="new-password" required minlength="12">
+          <label for="setupUsername">
+            LOGIN KOMENDANTURY
+          </label>
 
-          <button class="primary-button" type="submit">UTWÓRZ KONTO</button>
+          <input
+            id="setupUsername"
+            name="username"
+            type="text"
+            autocomplete="username"
+            required
+            minlength="3"
+          >
+
+          <label for="setupPassword">
+            NOWE HASŁO
+          </label>
+
+          <input
+            id="setupPassword"
+            name="password"
+            type="password"
+            autocomplete="new-password"
+            required
+            minlength="12"
+          >
+
+          <button class="primary-button" type="submit">
+            UTWÓRZ KONTO
+          </button>
+
         </form>
       </section>
 
+      <!-- PANEL GŁÓWNY -->
       <section id="dashboardScreen" class="screen-section hidden">
+
         <div class="user-panel">
+
           <div>
-            <div id="welcomeName" class="welcome-name">FUNKCJONARIUSZ</div>
+            <div id="welcomeName" class="welcome-name">
+              FUNKCJONARIUSZ
+            </div>
+
             <div id="userDetails" class="muted"></div>
           </div>
-          <button id="logoutButton" class="small-button">WYLOGUJ</button>
+
+          <button id="logoutButton" class="small-button">
+            WYLOGUJ
+          </button>
+
         </div>
 
-        <div class="section-title">MENU GŁÓWNE</div>
+        <div class="section-title">
+          MENU GŁÓWNE
+        </div>
 
+        <!-- MENU -->
         <div class="menu-grid">
-          <button class="menu-button" data-page="summary">PULPIT</button>
-          <button class="menu-button" data-page="people">REJESTR OBYWATELI</button>
-          <button class="menu-button" data-page="citizenSearch">SPRAWDZANIE OBYWATELI</button>
-          <button class="menu-button" data-page="vehicles">POJAZDY</button>
-          <button class="menu-button" data-page="citations">WYKROCZENIA I MANDATY</button>
-          <button class="menu-button" data-page="reports">RAPORTY</button>
-          <button class="menu-button" data-page="units">PATROLE</button>
-          <button id="usersMenuButton" class="menu-button hidden" data-page="users">ZARZĄDZANIE DOSTĘPAMI</button>
+
+          <button
+            class="menu-button"
+            data-page="summary"
+          >
+            PULPIT
+          </button>
+
+          <button
+            class="menu-button"
+            data-page="people"
+          >
+            REJESTR OBYWATELI
+          </button>
+
+          <button
+            class="menu-button"
+            data-page="citizenSearch"
+          >
+            SPRAWDZANIE OBYWATELI
+          </button>
+
+          <button
+            class="menu-button"
+            data-page="vehicles"
+          >
+            POJAZDY
+          </button>
+
+          <button
+            class="menu-button"
+            data-page="citations"
+          >
+            WYKROCZENIA I MANDATY
+          </button>
+
+          <button
+            class="menu-button"
+            data-page="reports"
+          >
+            RAPORTY
+          </button>
+
+          <button
+            class="menu-button"
+            data-page="units"
+          >
+            PATROLE
+          </button>
+
+          <button
+            id="usersMenuButton"
+            class="menu-button hidden"
+            data-page="users"
+          >
+            ZARZĄDZANIE DOSTĘPAMI
+          </button>
+
         </div>
 
+        <!-- OBSZAR ZAWARTOŚCI -->
         <div id="contentArea" class="content-area">
-          <div class="section-title">PULPIT SŁUŻBOWY</div>
-          <div id="summaryContent" class="summary-grid"></div>
+
+          <div class="section-title">
+            PULPIT SŁUŻBOWY
+          </div>
+
+          <div
+            id="summaryContent"
+            class="summary-grid"
+          ></div>
+
         </div>
+
       </section>
+
     </div>
 
+    <!-- DOLNA CZĘŚĆ URZĄDZENIA -->
     <div class="device-bottom">
       <div class="nav-square"></div>
       <div class="nav-circle"></div>
       <div class="nav-back"></div>
     </div>
+
   </main>
 
-  <footer class="page-footer">SYSTEM MDT • KPP LUBIN</footer>
+  <!-- STOPKA -->
+  <footer class="page-footer">
+    KPP LUBIN
+  </footer>
+
+  <!-- GŁÓWNY SKRYPT APLIKACJI -->
   <script src="/app.js"></script>
+
+  <!-- ANIMACJA STARTOWA -->
+  <script>
+    (() => {
+      const bootScreen = document.getElementById("bootScreen");
+      const progressBar = document.getElementById("bootProgressBar");
+      const status = document.getElementById("bootStatus");
+
+      if (!bootScreen || !progressBar || !status) {
+        return;
+      }
+
+      const stages = [
+        { progress: 0, text: "URUCHAMIANIE SYSTEMU..." },
+        { progress: 25, text: "ŁADOWANIE MODUŁÓW..." },
+        { progress: 50, text: "SPRAWDZANIE SYSTEMU..." },
+        { progress: 75, text: "ŁĄCZENIE Z SERWEREM..." },
+        { progress: 100, text: "SYSTEM GOTOWY" }
+      ];
+
+      const duration = 5000;
+      const interval = 50;
+      const startedAt = Date.now();
+
+      const timer = setInterval(() => {
+        const elapsed = Date.now() - startedAt;
+        const progress = Math.min(
+          100,
+          (elapsed / duration) * 100
+        );
+
+        progressBar.style.width = progress + "%";
+
+        const stage = [...stages]
+          .reverse()
+          .find(item => progress >= item.progress);
+
+        if (stage) {
+          status.textContent = stage.text;
+        }
+
+        if (progress >= 100) {
+          clearInterval(timer);
+
+          setTimeout(() => {
+            bootScreen.classList.add("boot-hidden");
+          }, 300);
+        }
+      }, interval);
+    })();
+  </script>
+
 </body>
 </html>
