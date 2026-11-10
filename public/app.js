@@ -1,15 +1,37 @@
+
 "use strict";
 
-const $ = (selector) => document.querySelector(selector);
+const $ = selector => document.querySelector(selector);
 
 const state = {
   user: null,
   users: [],
   currentPage: "summary",
+  dispatchPage: "interventions",
   records: {}
 };
 
 const contentArea = $("#contentArea");
+
+let dispatchRefreshTimer = null;
+let notificationTimer = null;
+let knownInterventionIds = null;
+let notificationAudioContext = null;
+let dispatchLoading = false;
+
+const dispatchStatuses = [
+  "Oczekuje na przydział",
+  "Przydzielona",
+  "W drodze",
+  "Na miejscu",
+  "Zakończona"
+];
+
+const dispatchPriorities = ["Niski", "Normalny", "Wysoki", "Pilny"];
+
+// ==================================================
+// PODSTAWOWE FUNKCJE
+// ==================================================
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, char => ({
@@ -41,7 +63,11 @@ async function api(url, options = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(data.error || data.message || `Błąd serwera: ${response.status}`);
+    throw new Error(
+      data.error ||
+      data.message ||
+      `Błąd serwera: ${response.status}`
+    );
   }
 
   return data;
@@ -56,6 +82,7 @@ function showMessage(message, isError = false) {
   element.classList.toggle("error", isError);
 
   clearTimeout(showMessage.timer);
+
   showMessage.timer = setTimeout(() => {
     element.classList.add("hidden");
   }, 5000);
@@ -63,15 +90,13 @@ function showMessage(message, isError = false) {
 
 function hideScreens() {
   ["loginScreen", "setupScreen", "dashboardScreen"].forEach(id => {
-    const element = document.getElementById(id);
-    if (element) element.classList.add("hidden");
+    document.getElementById(id)?.classList.add("hidden");
   });
 }
 
 function showScreen(id) {
   hideScreens();
-  const element = document.getElementById(id);
-  if (element) element.classList.remove("hidden");
+  document.getElementById(id)?.classList.remove("hidden");
 }
 
 function isAdmin() {
@@ -90,7 +115,8 @@ function updateUserPanel() {
   const adminButton = $("#usersMenuButton");
 
   if (name) {
-    name.textContent = state.user?.displayName ||
+    name.textContent =
+      state.user?.displayName ||
       state.user?.display_name ||
       state.user?.username ||
       "FUNKCJONARIUSZ";
@@ -99,7 +125,9 @@ function updateUserPanel() {
   if (details) {
     details.textContent = [
       state.user?.rank,
-      state.user?.badge ? `Odznaka: ${state.user.badge}` : ""
+      state.user?.badge
+        ? `Odznaka: ${state.user.badge}`
+        : ""
     ].filter(Boolean).join(" • ");
   }
 
@@ -108,13 +136,49 @@ function updateUserPanel() {
   }
 }
 
+function stopBackgroundTasks() {
+  if (notificationTimer) {
+    clearInterval(notificationTimer);
+    notificationTimer = null;
+  }
+
+  if (dispatchRefreshTimer) {
+    clearInterval(dispatchRefreshTimer);
+    dispatchRefreshTimer = null;
+  }
+
+  knownInterventionIds = null;
+}
+
+function setNavigationVisibility() {
+  document.querySelectorAll("[data-page]").forEach(button => {
+    if (isDispatcher()) {
+      button.classList.add("hidden");
+      button.classList.remove("active");
+      return;
+    }
+
+    button.classList.remove("hidden");
+
+    if (button.dataset.page === "users" && !isAdmin()) {
+      button.classList.add("hidden");
+    }
+  });
+}
+
+// ==================================================
+// LOGOWANIE I KONTO
+// ==================================================
+
 async function startApp() {
   hideScreens();
+  stopBackgroundTasks();
 
   try {
     const status = await api("/api/status");
 
     if (status.needsSetup) {
+      state.user = null;
       showScreen("setupScreen");
       return;
     }
@@ -123,12 +187,16 @@ async function startApp() {
 
     if (result && result.id) {
       state.user = result;
+
       updateUserPanel();
+      setNavigationVisibility();
       showScreen("dashboardScreen");
+
+      startBackgroundTasks();
 
       if (isDispatcher()) {
         showMessage("Zalogowano na konto Dyżurnego.");
-        await openPage("summary");
+        await openPage("dispatch");
       } else {
         await openPage("summary");
       }
@@ -136,8 +204,10 @@ async function startApp() {
       return;
     }
 
+    state.user = null;
     showScreen("loginScreen");
   } catch {
+    state.user = null;
     showScreen("loginScreen");
   }
 }
@@ -147,6 +217,7 @@ $("#setupForm")?.addEventListener("submit", async event => {
 
   const form = event.currentTarget;
   const button = form.querySelector('button[type="submit"]');
+
   button.disabled = true;
 
   try {
@@ -160,6 +231,7 @@ $("#setupForm")?.addEventListener("submit", async event => {
 
     form.reset();
     showMessage("Konto Komendantury zostało utworzone.");
+
     await startApp();
   } catch (error) {
     showMessage(error.message, true);
@@ -173,6 +245,7 @@ $("#loginForm")?.addEventListener("submit", async event => {
 
   const form = event.currentTarget;
   const button = form.querySelector('button[type="submit"]');
+
   button.disabled = true;
 
   try {
@@ -185,16 +258,22 @@ $("#loginForm")?.addEventListener("submit", async event => {
     });
 
     state.user = result.user || result;
+
     form.reset();
 
     updateUserPanel();
+    setNavigationVisibility();
     showScreen("dashboardScreen");
+
+    // Powiadomienia uruchamiają się również po ręcznym logowaniu.
+    startBackgroundTasks();
 
     if (isDispatcher()) {
       showMessage("Zalogowano na konto Dyżurnego.");
+      await openPage("dispatch");
+    } else {
+      await openPage("summary");
     }
-
-    await openPage("summary");
   } catch (error) {
     showMessage(error.message, true);
   } finally {
@@ -203,15 +282,24 @@ $("#loginForm")?.addEventListener("submit", async event => {
 });
 
 $("#logoutButton")?.addEventListener("click", async () => {
+  stopBackgroundTasks();
+
   try {
     await api("/api/logout", { method: "POST" });
   } catch {
-    // Powrót do ekranu logowania niezależnie od odpowiedzi serwera.
+    // Wylogowanie lokalne niezależnie od odpowiedzi serwera.
   }
 
   state.user = null;
+  state.records = {};
+  state.users = [];
+
   showScreen("loginScreen");
 });
+
+// ==================================================
+// MODUŁY SYSTEMU
+// ==================================================
 
 const modules = {
   people: {
@@ -230,6 +318,7 @@ const modules = {
       ["verification_status", "Status weryfikacji"]
     ]
   },
+
   vehicles: {
     title: "POJAZDY",
     endpoint: "/api/vehicles",
@@ -243,6 +332,7 @@ const modules = {
       ["notes", "Notatki"]
     ]
   },
+
   citations: {
     title: "WYKROCZENIA I MANDATY",
     endpoint: "/api/citations",
@@ -255,6 +345,7 @@ const modules = {
       ["notes", "Notatki"]
     ]
   },
+
   reports: {
     title: "RAPORTY",
     endpoint: "/api/reports",
@@ -267,6 +358,7 @@ const modules = {
       ["status", "Status"]
     ]
   },
+
   units: {
     title: "PATROLE",
     endpoint: "/api/units",
@@ -288,7 +380,8 @@ function fieldHtml(field, value = "") {
   if (type === "checkbox") {
     return `
       <label class="form-check">
-        <input name="${name}" type="checkbox" ${value ? "checked" : ""}>
+        <input name="${name}" type="checkbox"
+          ${value ? "checked" : ""}>
         ${label}
       </label>
     `;
@@ -322,23 +415,34 @@ function readForm(form, config) {
   return result;
 }
 
+// ==================================================
+// NAWIGACJA
+// ==================================================
+
 async function openPage(page) {
   if (!state.user) return;
+
+  if (isDispatcher()) {
+    await renderDispatchPage(
+      page === "dispatch" ? state.dispatchPage : "interventions"
+    );
+    return;
+  }
 
   if (page === "users" && !isAdmin()) {
     showMessage("Brak uprawnień.", true);
     return;
   }
 
-  if (isDispatcher() && page !== "summary") {
-    showMessage("Konto Dyżurnego nie ma dostępu do tego modułu.", true);
-    return;
-  }
-
   state.currentPage = page;
 
   document.querySelectorAll("[data-page]").forEach(button => {
+    button.classList.remove("hidden");
     button.classList.toggle("active", button.dataset.page === page);
+
+    if (button.dataset.page === "users" && !isAdmin()) {
+      button.classList.add("hidden");
+    }
   });
 
   if (page === "summary") {
@@ -351,6 +455,16 @@ async function openPage(page) {
     await renderModule(page);
   }
 }
+
+document.querySelectorAll("[data-page]").forEach(button => {
+  button.addEventListener("click", () => {
+    openPage(button.dataset.page);
+  });
+});
+
+// ==================================================
+// PULPIT
+// ==================================================
 
 async function renderSummary() {
   contentArea.innerHTML = `
@@ -367,17 +481,28 @@ async function renderSummary() {
         ${Object.entries(data).map(([key, value]) => `
           <div class="panel">
             <strong>${escapeHtml(key)}</strong>
-            <div>${escapeHtml(typeof value === "object" ? JSON.stringify(value) : value)}</div>
+            <div>${escapeHtml(
+              typeof value === "object"
+                ? JSON.stringify(value)
+                : value
+            )}</div>
           </div>
         `).join("")}
       </div>
     `;
   } catch (error) {
     contentArea.innerHTML = `
-      <div class="panel">Nie udało się pobrać pulpitu: ${escapeHtml(error.message)}</div>
+      <div class="panel">
+        Nie udało się pobrać pulpitu:
+        ${escapeHtml(error.message)}
+      </div>
     `;
   }
 }
+
+// ==================================================
+// MODUŁY DANYCH
+// ==================================================
 
 async function renderModule(page) {
   const config = modules[page];
@@ -389,6 +514,7 @@ async function renderModule(page) {
 
   try {
     const records = await api(config.endpoint);
+
     state.records[page] = Array.isArray(records) ? records : [];
 
     contentArea.innerHTML = `
@@ -396,6 +522,7 @@ async function renderModule(page) {
 
       <section class="panel">
         <h2>DODAJ NOWY WPIS</h2>
+
         <form id="recordForm">
           ${config.fields.map(field => fieldHtml(field)).join("")}
           <button class="primary-button" type="submit">ZAPISZ</button>
@@ -413,6 +540,7 @@ async function renderModule(page) {
 
       const form = event.currentTarget;
       const button = form.querySelector('button[type="submit"]');
+
       button.disabled = true;
 
       try {
@@ -440,12 +568,19 @@ async function renderModule(page) {
     list.innerHTML = state.records[page].map(record => `
       <div class="user-row">
         ${config.fields.map(([name, label, type]) => `
-          <p><strong>${label}:</strong>
-          ${escapeHtml(type === "checkbox"
-            ? (record[name] ? "Tak" : "Nie")
-            : record[name] ?? "")}</p>
+          <p>
+            <strong>${label}:</strong>
+            ${escapeHtml(
+              type === "checkbox"
+                ? (record[name] ? "Tak" : "Nie")
+                : record[name] ?? ""
+            )}
+          </p>
         `).join("")}
-        <button type="button" data-delete-record="${record.id}">USUŃ WPIS</button>
+
+        <button type="button" data-delete-record="${record.id}">
+          USUŃ WPIS
+        </button>
       </div>
     `).join("");
 
@@ -454,9 +589,10 @@ async function renderModule(page) {
         if (!confirm("Czy na pewno usunąć ten wpis?")) return;
 
         try {
-          await api(`${config.endpoint}/${button.dataset.deleteRecord}`, {
-            method: "DELETE"
-          });
+          await api(
+            `${config.endpoint}/${button.dataset.deleteRecord}`,
+            { method: "DELETE" }
+          );
 
           showMessage("Usunięto wpis.");
           await renderModule(page);
@@ -465,7 +601,6 @@ async function renderModule(page) {
         }
       });
     });
-
   } catch (error) {
     contentArea.innerHTML = `
       <div class="panel">
@@ -476,16 +611,23 @@ async function renderModule(page) {
   }
 }
 
+// ==================================================
+// WYSZUKIWANIE OBYWATELI
+// ==================================================
+
 function renderCitizenSearch() {
   contentArea.innerHTML = `
     <div class="section-title">SPRAWDZANIE OBYWATELI</div>
+
     <section class="panel">
       <h2>WYSZUKIWANIE</h2>
+
       <form id="citizenSearchForm">
         <label>Imię, nazwisko lub identyfikator RP</label>
         <input name="query" required>
         <button class="primary-button" type="submit">SZUKAJ</button>
       </form>
+
       <div id="citizenResults"></div>
     </section>
   `;
@@ -503,13 +645,20 @@ function renderCitizenSearch() {
         `/api/citizens/search?q=${encodeURIComponent(query)}`
       );
 
-      const citizens = Array.isArray(data) ? data : data.results || [];
+      const citizens = Array.isArray(data)
+        ? data
+        : data.results || [];
 
       results.innerHTML = citizens.length
         ? citizens.map(person => `
           <div class="user-row">
-            <strong>${escapeHtml(person.name ||
-              `${person.first_name || ""} ${person.last_name || ""}`)}</strong>
+            <strong>
+              ${escapeHtml(
+                person.name ||
+                `${person.first_name || ""} ${person.last_name || ""}`
+              )}
+            </strong>
+
             <p>Identyfikator RP: ${escapeHtml(person.pesel || "Brak")}</p>
             <p>Adres: ${escapeHtml(person.address || "Brak")}</p>
             <p>Status: ${person.wanted ? "POSZUKIWANY" : "Brak wpisu"}</p>
@@ -521,6 +670,10 @@ function renderCitizenSearch() {
     }
   });
 }
+
+// ==================================================
+// ZARZĄDZANIE KONTAMI
+// ==================================================
 
 async function renderUsers() {
   if (!isAdmin()) {
@@ -548,7 +701,8 @@ async function renderUsers() {
           <input name="username" required minlength="3" autocomplete="off">
 
           <label>Hasło</label>
-          <input name="password" type="password" required minlength="12" autocomplete="new-password">
+          <input name="password" type="password" required
+            minlength="12" autocomplete="new-password">
 
           <label>Imię i nazwisko</label>
           <input name="display_name" required>
@@ -596,7 +750,9 @@ async function renderUsers() {
             </select>
           </div>
 
-          <button class="primary-button" type="submit">UTWÓRZ KONTO</button>
+          <button class="primary-button" type="submit">
+            UTWÓRZ KONTO
+          </button>
         </form>
       </section>
 
@@ -612,11 +768,11 @@ async function renderUsers() {
     const rankContainer = $("#rankContainer");
 
     function updateRankVisibility() {
-      const isDispatcherAccount = roleSelect.value === "DYŻURNY";
+      const dispatcher = roleSelect.value === "DYŻURNY";
 
-      rankContainer.classList.toggle("hidden", isDispatcherAccount);
-      rankSelect.required = !isDispatcherAccount;
-      rankSelect.disabled = isDispatcherAccount;
+      rankContainer.classList.toggle("hidden", dispatcher);
+      rankSelect.required = !dispatcher;
+      rankSelect.disabled = dispatcher;
     }
 
     roleSelect.addEventListener("change", updateRankVisibility);
@@ -716,7 +872,6 @@ async function renderUsers() {
         }
       });
     });
-
   } catch (error) {
     contentArea.innerHTML = `
       <div class="panel">
@@ -727,70 +882,140 @@ async function renderUsers() {
   }
 }
 
-document.querySelectorAll("[data-page]").forEach(button => {
-  button.addEventListener("click", () => {
-    openPage(button.dataset.page);
-  });
-});
-
 // ==================================================
-// TABLET DYŻURNEGO + INTERWENCJE + POWIADOMIENIA
+// TABLET DYŻURNEGO
 // ==================================================
 
 const dispatchStyle = document.createElement("style");
+
 dispatchStyle.textContent = `
   .dispatch-wrap { display:grid; gap:16px; }
-  .dispatch-nav { display:flex; flex-wrap:wrap; gap:8px; }
-  .dispatch-nav button, .dispatch-action {
-    border:1px solid #526477; border-radius:8px; padding:10px 14px;
-    background:#172536; color:#fff; cursor:pointer;
+
+  .dispatch-nav {
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
   }
-  .dispatch-nav button.active, .dispatch-action.primary {
-    background:#1765a5; border-color:#268bd2;
+
+  .dispatch-nav button,
+  .dispatch-action {
+    border:1px solid #526477;
+    border-radius:8px;
+    padding:10px 14px;
+    background:#172536;
+    color:#fff;
+    cursor:pointer;
   }
-  .dispatch-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
-  .dispatch-card { background:rgba(20,35,52,.9); border:1px solid #40546b; border-radius:10px; padding:14px; }
+
+  .dispatch-nav button.active,
+  .dispatch-action.primary {
+    background:#1765a5;
+    border-color:#268bd2;
+  }
+
+  .dispatch-grid {
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+    gap:12px;
+  }
+
+  .dispatch-card {
+    background:rgba(20,35,52,.9);
+    border:1px solid #40546b;
+    border-radius:10px;
+    padding:14px;
+  }
+
   .dispatch-card h3 { margin-top:0; }
-  .dispatch-card label { display:block; margin:10px 0 5px; }
-  .dispatch-card input, .dispatch-card textarea, .dispatch-card select {
-    width:100%; box-sizing:border-box; padding:10px; border-radius:6px;
-    border:1px solid #526477; background:#101c2a; color:#fff;
+
+  .dispatch-card label {
+    display:block;
+    margin:10px 0 5px;
   }
-  .dispatch-card textarea { min-height:90px; resize:vertical; }
-  .dispatch-intervention { border:1px solid #40546b; border-radius:10px; padding:14px; margin:12px 0; }
+
+  .dispatch-card input,
+  .dispatch-card textarea,
+  .dispatch-card select {
+    width:100%;
+    box-sizing:border-box;
+    padding:10px;
+    border-radius:6px;
+    border:1px solid #526477;
+    background:#101c2a;
+    color:#fff;
+  }
+
+  .dispatch-card textarea {
+    min-height:90px;
+    resize:vertical;
+  }
+
+  .dispatch-intervention {
+    border:1px solid #40546b;
+    border-radius:10px;
+    padding:14px;
+    margin:12px 0;
+  }
+
   .dispatch-intervention p { overflow-wrap:anywhere; }
-  .dispatch-status { display:inline-block; padding:5px 9px; border-radius:6px; background:#263c53; margin:4px 0; }
-  .dispatch-history { border-left:2px solid #526477; padding-left:12px; margin:12px 0; }
-  .dispatch-muted { opacity:.75; font-size:.9em; }
-  .dispatch-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; }
+
+  .dispatch-status {
+    display:inline-block;
+    padding:5px 9px;
+    border-radius:6px;
+    background:#263c53;
+    margin:4px 0;
+  }
+
+  .dispatch-history {
+    border-left:2px solid #526477;
+    padding-left:12px;
+    margin:12px 0;
+  }
+
+  .dispatch-muted {
+    opacity:.75;
+    font-size:.9em;
+  }
+
+  .dispatch-toolbar {
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    align-items:center;
+    justify-content:space-between;
+  }
+
   .dispatch-toolbar button { padding:9px 12px; }
-  .dispatch-unit { padding:10px; border:1px solid #40546b; border-radius:8px; margin:7px 0; }
-  .dispatch-empty { padding:18px; text-align:center; opacity:.75; }
+
+  .dispatch-unit {
+    padding:10px;
+    border:1px solid #40546b;
+    border-radius:8px;
+    margin:7px 0;
+  }
+
+  .dispatch-empty {
+    padding:18px;
+    text-align:center;
+    opacity:.75;
+  }
+
   @media(max-width:600px) {
-    .dispatch-card, .dispatch-intervention { padding:11px; }
+    .dispatch-card,
+    .dispatch-intervention { padding:11px; }
+
     .dispatch-nav button { flex:1 1 100%; }
   }
 `;
+
 document.head.appendChild(dispatchStyle);
-
-let dispatchRefreshTimer = null;
-let notificationTimer = null;
-let knownInterventionIds = null;
-let notificationAudioContext = null;
-
-const dispatchStatuses = [
-  "Oczekuje na przydział",
-  "Przydzielona",
-  "W drodze",
-  "Na miejscu",
-  "Zakończona"
-];
-
-const dispatchPriorities = ["Niski", "Normalny", "Wysoki", "Pilny"];
 
 function dispatchDate(value) {
   if (!value) return "Brak danych";
+
   const date = new Date(value);
+
   return Number.isNaN(date.getTime())
     ? "Brak danych"
     : date.toLocaleString("pl-PL");
@@ -799,15 +1024,20 @@ function dispatchDate(value) {
 function dispatchNav(active) {
   return `
     <div class="dispatch-nav">
-      <button type="button" data-dispatch-page="interventions"
+      <button type="button"
+        data-dispatch-page="interventions"
         class="${active === "interventions" ? "active" : ""}">
         INTERWENCJE
       </button>
-      <button type="button" data-dispatch-page="units"
+
+      <button type="button"
+        data-dispatch-page="units"
         class="${active === "units" ? "active" : ""}">
         PATROLE
       </button>
-      <button type="button" data-dispatch-page="history"
+
+      <button type="button"
+        data-dispatch-page="history"
         class="${active === "history" ? "active" : ""}">
         HISTORIA
       </button>
@@ -827,6 +1057,7 @@ async function renderDispatchPage(page = "interventions") {
   if (!isDispatcher()) return;
 
   state.currentPage = "dispatch";
+  state.dispatchPage = page;
 
   document.querySelectorAll("[data-page]").forEach(button => {
     button.classList.remove("active");
@@ -842,29 +1073,45 @@ async function renderDispatchPage(page = "interventions") {
   }
 }
 
+// ==================================================
+// INTERWENCJE
+// ==================================================
+
 async function renderDispatchInterventions() {
   contentArea.innerHTML = `
     <div class="section-title">TABLET DYŻURNEGO</div>
+
     <div class="dispatch-wrap">
       ${dispatchNav("interventions")}
+
       <section class="dispatch-card">
         <div class="dispatch-toolbar">
           <h2>NOWA INTERWENCJA</h2>
-          <button type="button" id="dispatchRefresh" class="dispatch-action">ODŚWIEŻ</button>
+          <button type="button" id="dispatchRefresh"
+            class="dispatch-action">ODŚWIEŻ</button>
         </div>
+
         <form id="newInterventionForm">
           <label>Adres zdarzenia *</label>
-          <input name="address" maxlength="300" required placeholder="Ulica, numer, miejscowość">
+          <input name="address" maxlength="300" required
+            placeholder="Ulica, numer, miejscowość">
 
           <label>Osoba zgłaszająca</label>
-          <input name="reporter" maxlength="150" placeholder="Dane zgłaszającego">
+          <input name="reporter" maxlength="150"
+            placeholder="Dane zgłaszającego">
 
           <label>Opis zdarzenia *</label>
-          <textarea name="description" maxlength="5000" required placeholder="Opis zgłoszenia"></textarea>
+          <textarea name="description" maxlength="5000" required
+            placeholder="Opis zgłoszenia"></textarea>
 
           <label>Priorytet</label>
           <select name="priority">
-            ${dispatchPriorities.map(p => `<option value="${p}" ${p === "Normalny" ? "selected" : ""}>${p}</option>`).join("")}
+            ${dispatchPriorities.map(priority => `
+              <option value="${priority}"
+                ${priority === "Normalny" ? "selected" : ""}>
+                ${priority}
+              </option>
+            `).join("")}
           </select>
 
           <label>Przydziel patrol (opcjonalnie)</label>
@@ -872,7 +1119,9 @@ async function renderDispatchInterventions() {
             <option value="">Bez przydziału — oczekuje</option>
           </select>
 
-          <button class="dispatch-action primary" type="submit">UTWÓRZ INTERWENCJĘ</button>
+          <button class="dispatch-action primary" type="submit">
+            UTWÓRZ INTERWENCJĘ
+          </button>
         </form>
       </section>
 
@@ -894,32 +1143,44 @@ async function renderDispatchInterventions() {
       api("/api/interventions"),
       api("/api/units")
     ]);
+
     state.records.interventions = interventions;
-    
-    const availableUnits = units.filter(unit => unit.status === "Dostępny");
+
+    const availableUnits = units.filter(unit =>
+      unit.status === "Dostępny"
+    );
+
     $("#newInterventionUnit").innerHTML =
       `<option value="">Bez przydziału — oczekuje</option>` +
       availableUnits.map(unit => `
         <option value="${unit.id}">
-          ${escapeHtml(unit.callsign)} — ${escapeHtml(unit.officers || "Brak danych")}
+          ${escapeHtml(unit.callsign)} —
+          ${escapeHtml(unit.officers || "Brak danych")}
         </option>
       `).join("");
 
     $("#dispatchInterventionList").innerHTML = interventions.length
       ? interventions.map(renderInterventionCard).join("")
-      : `<div class="dispatch-empty">Brak zarejestrowanych interwencji.</div>`;
+      : `<div class="dispatch-empty">
+          Brak zarejestrowanych interwencji.
+        </div>`;
 
-    bindInterventionActions();
+    await bindInterventionActions();
   } catch (error) {
-    $("#dispatchInterventionList").innerHTML =
-      `<p>Błąd pobierania danych: ${escapeHtml(error.message)}</p>`;
+    const list = $("#dispatchInterventionList");
+
+    if (list) {
+      list.innerHTML =
+        `<p>Błąd pobierania danych: ${escapeHtml(error.message)}</p>`;
+    }
   }
 
-  $("#newInterventionForm").addEventListener("submit", async event => {
+  $("#newInterventionForm")?.addEventListener("submit", async event => {
     event.preventDefault();
 
     const form = event.currentTarget;
     const button = form.querySelector('button[type="submit"]');
+
     button.disabled = true;
 
     try {
@@ -945,7 +1206,9 @@ async function renderDispatchInterventions() {
 }
 
 function renderInterventionCard(item) {
-  const history = Array.isArray(item.history) ? item.history : [];
+  const history = Array.isArray(item.history)
+    ? item.history
+    : [];
 
   return `
     <article class="dispatch-intervention">
@@ -955,23 +1218,32 @@ function renderInterventionCard(item) {
       </div>
 
       <p><strong>Adres:</strong> ${escapeHtml(item.address)}</p>
-      <p><strong>Zgłaszający:</strong> ${escapeHtml(item.reporter || "Nie podano")}</p>
+      <p><strong>Zgłaszający:</strong>
+        ${escapeHtml(item.reporter || "Nie podano")}
+      </p>
       <p><strong>Opis:</strong> ${escapeHtml(item.description)}</p>
       <p><strong>Priorytet:</strong> ${escapeHtml(item.priority)}</p>
-      <p><strong>Patrol:</strong> ${escapeHtml(item.unit_callsign || item.callsign || "Nieprzydzielony")}</p>
-      <p class="dispatch-muted">Utworzono: ${escapeHtml(dispatchDate(item.created_at))}</p>
+      <p><strong>Patrol:</strong>
+        ${escapeHtml(item.unit_callsign || item.callsign || "Nieprzydzielony")}
+      </p>
+
+      <p class="dispatch-muted">
+        Utworzono: ${escapeHtml(dispatchDate(item.created_at))}
+      </p>
 
       <div class="dispatch-grid">
         <div>
           <label>Status</label>
           <select data-intervention-status="${item.id}">
             ${dispatchStatuses.map(status => `
-              <option value="${status}" ${item.status === status ? "selected" : ""}>
+              <option value="${status}"
+                ${item.status === status ? "selected" : ""}>
                 ${status}
               </option>
             `).join("")}
           </select>
         </div>
+
         <div>
           <label>Przydziel patrol</label>
           <select data-intervention-unit="${item.id}">
@@ -988,11 +1260,15 @@ function renderInterventionCard(item) {
       ${history.length ? `
         <details>
           <summary>Historia interwencji (${history.length})</summary>
+
           ${history.map(entry => `
             <div class="dispatch-history">
               <strong>${escapeHtml(entry.event)}</strong>
               <p>${escapeHtml(entry.details || "")}</p>
-              <small>${escapeHtml(entry.actor_name || "System")} — ${escapeHtml(dispatchDate(entry.created_at))}</small>
+              <small>
+                ${escapeHtml(entry.actor_name || "System")} —
+                ${escapeHtml(dispatchDate(entry.created_at))}
+              </small>
             </div>
           `).join("")}
         </details>
@@ -1007,20 +1283,25 @@ async function bindInterventionActions() {
 
     document.querySelectorAll("[data-intervention-unit]").forEach(select => {
       const interventionId = select.dataset.interventionUnit;
-      const intervention = state.records.interventions?.find(
-        item => String(item.id) === String(interventionId)
+
+      const intervention = state.records.interventions?.find(item =>
+        String(item.id) === String(interventionId)
       );
 
       const currentUnitId = intervention?.unit_id;
 
       const options = units.filter(unit =>
-        unit.status === "Dostępny" || String(unit.id) === String(currentUnitId)
+        unit.status === "Dostępny" ||
+        String(unit.id) === String(currentUnitId)
       );
 
-      select.innerHTML = `<option value="">Bez patrolu</option>` +
+      select.innerHTML =
+        `<option value="">Bez patrolu</option>` +
         options.map(unit => `
-          <option value="${unit.id}" ${String(unit.id) === String(currentUnitId) ? "selected" : ""}>
-            ${escapeHtml(unit.callsign)} — ${escapeHtml(unit.officers || "Brak danych")}
+          <option value="${unit.id}"
+            ${String(unit.id) === String(currentUnitId) ? "selected" : ""}>
+            ${escapeHtml(unit.callsign)} —
+            ${escapeHtml(unit.officers || "Brak danych")}
             (${escapeHtml(unit.status)})
           </option>
         `).join("");
@@ -1029,8 +1310,14 @@ async function bindInterventionActions() {
     document.querySelectorAll("[data-save-intervention]").forEach(button => {
       button.addEventListener("click", async () => {
         const id = button.dataset.saveIntervention;
-        const status = document.querySelector(`[data-intervention-status="${id}"]`).value;
-        const unitId = document.querySelector(`[data-intervention-unit="${id}"]`).value;
+
+        const statusSelect =
+          document.querySelector(`[data-intervention-status="${id}"]`);
+
+        const unitSelect =
+          document.querySelector(`[data-intervention-unit="${id}"]`);
+
+        if (!statusSelect || !unitSelect) return;
 
         button.disabled = true;
 
@@ -1038,8 +1325,8 @@ async function bindInterventionActions() {
           await api(`/api/interventions/${id}`, {
             method: "PATCH",
             body: JSON.stringify({
-              status,
-              unit_id: unitId || null
+              status: statusSelect.value,
+              unit_id: unitSelect.value || null
             })
           });
 
@@ -1053,20 +1340,31 @@ async function bindInterventionActions() {
       });
     });
   } catch (error) {
-    showMessage("Nie udało się pobrać patroli: " + error.message, true);
+    showMessage(
+      "Nie udało się pobrać patroli: " + error.message,
+      true
+    );
   }
 }
+
+// ==================================================
+// STAN PATROLI
+// ==================================================
 
 async function renderDispatchUnits() {
   contentArea.innerHTML = `
     <div class="section-title">TABLET DYŻURNEGO</div>
+
     <div class="dispatch-wrap">
       ${dispatchNav("units")}
+
       <section class="dispatch-card">
         <div class="dispatch-toolbar">
           <h2>STAN PATROLI</h2>
-          <button type="button" id="dispatchUnitsRefresh" class="dispatch-action">ODŚWIEŻ</button>
+          <button type="button" id="dispatchUnitsRefresh"
+            class="dispatch-action">ODŚWIEŻ</button>
         </div>
+
         <div id="dispatchUnitsList">Ładowanie...</div>
       </section>
     </div>
@@ -1076,15 +1374,27 @@ async function renderDispatchUnits() {
 
   async function loadUnits() {
     const units = await api("/api/units");
+    const list = $("#dispatchUnitsList");
 
-    $("#dispatchUnitsList").innerHTML = units.length
+    if (!list) return;
+
+    list.innerHTML = units.length
       ? units.map(unit => `
         <div class="dispatch-unit">
           <strong>${escapeHtml(unit.callsign)}</strong>
           <span class="dispatch-status">${escapeHtml(unit.status)}</span>
-          <p>Funkcjonariusze: ${escapeHtml(unit.officers || "Brak danych")}</p>
-          <p>Rejon: ${escapeHtml(unit.area || "Nie określono")}</p>
-          <p>Pojazd: ${escapeHtml(unit.vehicle || "Nie określono")}</p>
+
+          <p>Funkcjonariusze:
+            ${escapeHtml(unit.officers || "Brak danych")}
+          </p>
+
+          <p>Rejon:
+            ${escapeHtml(unit.area || "Nie określono")}
+          </p>
+
+          <p>Pojazd:
+            ${escapeHtml(unit.vehicle || "Nie określono")}
+          </p>
         </div>
       `).join("")
       : "<p>Brak zarejestrowanych patroli.</p>";
@@ -1101,11 +1411,17 @@ async function renderDispatchUnits() {
   }
 }
 
+// ==================================================
+// HISTORIA
+// ==================================================
+
 async function renderDispatchHistory() {
   contentArea.innerHTML = `
     <div class="section-title">TABLET DYŻURNEGO</div>
+
     <div class="dispatch-wrap">
       ${dispatchNav("history")}
+
       <section class="dispatch-card">
         <h2>HISTORIA INTERWENCJI</h2>
         <div id="dispatchHistoryList">Ładowanie...</div>
@@ -1117,41 +1433,132 @@ async function renderDispatchHistory() {
 
   try {
     const interventions = await api("/api/interventions");
-    const completed = interventions.filter(item => item.status === "Zakończona");
+
+    const completed = interventions.filter(item =>
+      item.status === "Zakończona"
+    );
 
     $("#dispatchHistoryList").innerHTML = completed.length
       ? completed.map(item => `
         <div class="dispatch-intervention">
-          <strong>${escapeHtml(item.incident_number || `INT-${item.id}`)}</strong>
+          <strong>
+            ${escapeHtml(item.incident_number || `INT-${item.id}`)}
+          </strong>
+
           <p>Adres: ${escapeHtml(item.address)}</p>
           <p>Opis: ${escapeHtml(item.description)}</p>
-          <p>Patrol: ${escapeHtml(item.unit_callsign || item.callsign || "Nieprzydzielony")}</p>
-          <p>Zakończono / zmieniono: ${escapeHtml(dispatchDate(item.updated_at))}</p>
+          <p>Patrol:
+            ${escapeHtml(item.unit_callsign || item.callsign || "Nieprzydzielony")}
+          </p>
+
+          <p>Zakończono / zmieniono:
+            ${escapeHtml(dispatchDate(item.updated_at))}
+          </p>
+
           <details>
             <summary>Pokaż historię zmian</summary>
+
             ${(item.history || []).map(entry => `
               <div class="dispatch-history">
                 <strong>${escapeHtml(entry.event)}</strong>
                 <p>${escapeHtml(entry.details || "")}</p>
-                <small>${escapeHtml(entry.actor_name || "System")} — ${escapeHtml(dispatchDate(entry.created_at))}</small>
+                <small>
+                  ${escapeHtml(entry.actor_name || "System")} —
+                  ${escapeHtml(dispatchDate(entry.created_at))}
+                </small>
               </div>
             `).join("")}
           </details>
         </div>
       `).join("")
-      : `<div class="dispatch-empty">Nie ma jeszcze zakończonych interwencji.</div>`;
+      : `<div class="dispatch-empty">
+          Nie ma jeszcze zakończonych interwencji.
+        </div>`;
   } catch (error) {
     $("#dispatchHistoryList").textContent = error.message;
   }
 }
 
-// --------------------------------------------------
-// POWIADOMIENIA DLA FUNKCJONARIUSZA
-// --------------------------------------------------
+// ==================================================
+// AUTOMATYCZNE ODŚWIEŻANIE TABLETU
+// ==================================================
+
+async function refreshDispatchView() {
+  if (!state.user || !isDispatcher()) return;
+  if (state.currentPage !== "dispatch") return;
+  if (dispatchLoading) return;
+
+  // Nie odświeżamy formularza, kiedy Dyżurny właśnie coś wpisuje.
+  const active = document.activeElement;
+
+  if (
+    active &&
+    contentArea.contains(active) &&
+    ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)
+  ) {
+    return;
+  }
+
+  dispatchLoading = true;
+
+  try {
+    if (state.dispatchPage === "units") {
+      const units = await api("/api/units");
+      const list = $("#dispatchUnitsList");
+
+      if (!list) return;
+
+      list.innerHTML = units.length
+        ? units.map(unit => `
+          <div class="dispatch-unit">
+            <strong>${escapeHtml(unit.callsign)}</strong>
+            <span class="dispatch-status">${escapeHtml(unit.status)}</span>
+            <p>Funkcjonariusze:
+              ${escapeHtml(unit.officers || "Brak danych")}
+            </p>
+            <p>Rejon: ${escapeHtml(unit.area || "Nie określono")}</p>
+            <p>Pojazd: ${escapeHtml(unit.vehicle || "Nie określono")}</p>
+          </div>
+        `).join("")
+        : "<p>Brak zarejestrowanych patroli.</p>";
+    }
+
+    if (state.dispatchPage === "interventions") {
+      const interventions = await api("/api/interventions");
+      const list = $("#dispatchInterventionList");
+
+      if (!list) return;
+
+      state.records.interventions = interventions;
+
+      list.innerHTML = interventions.length
+        ? interventions.map(renderInterventionCard).join("")
+        : `<div class="dispatch-empty">
+            Brak zarejestrowanych interwencji.
+          </div>`;
+
+      await bindInterventionActions();
+    }
+
+    if (state.dispatchPage === "history") {
+      await renderDispatchHistory();
+    }
+  } catch {
+    // Chwilowy brak połączenia nie przerywa pracy tabletu.
+  } finally {
+    dispatchLoading = false;
+  }
+}
+
+// ==================================================
+// POWIADOMIENIA DŹWIĘKOWE
+// ==================================================
 
 function enableNotificationSound() {
   try {
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const AudioContextClass =
+      window.AudioContext || window.webkitAudioContext;
+
     if (!AudioContextClass) return;
 
     if (!notificationAudioContext) {
@@ -1184,18 +1591,25 @@ function playInterventionSound() {
     oscillator.start();
     oscillator.stop(context.currentTime + 0.35);
   } catch {
-    // Brak obsługi audio nie blokuje działania systemu.
+    // Brak obsługi audio nie blokuje aplikacji.
   }
 }
 
-document.addEventListener("pointerdown", enableNotificationSound, { once: true });
+document.addEventListener(
+  "pointerdown",
+  enableNotificationSound,
+  { once: true }
+);
 
 async function checkMyInterventions() {
   if (!state.user || isDispatcher()) return;
 
   try {
     const interventions = await api("/api/interventions/mine");
-    const currentIds = new Set(interventions.map(item => String(item.id)));
+
+    const currentIds = new Set(
+      interventions.map(item => String(item.id))
+    );
 
     if (knownInterventionIds === null) {
       knownInterventionIds = currentIds;
@@ -1208,92 +1622,45 @@ async function checkMyInterventions() {
 
     if (newAssignments.length) {
       playInterventionSound();
+
       showMessage(
-        `Nowa interwencja dla Twojego patrolu: ${newAssignments.map(item => item.incident_number || `INT-${item.id}`).join(", ")}`
+        `Nowa interwencja dla Twojego patrolu: ${
+          newAssignments.map(item =>
+            item.incident_number || `INT-${item.id}`
+          ).join(", ")
+        }`
       );
     }
 
     knownInterventionIds = currentIds;
   } catch {
-    // Brak połączenia nie przerywa pracy panelu.
+    // Brak połączenia nie przerywa pracy aplikacji.
   }
 }
 
-function startInterventionNotifications() {
-  if (notificationTimer) clearInterval(notificationTimer);
-  knownInterventionIds = null;
+function startBackgroundTasks() {
+  stopBackgroundTasks();
 
-  if (!isDispatcher()) {
-    checkMyInterventions();
-    notificationTimer = setInterval(checkMyInterventions, 12000);
-  }
-}
-
-// --------------------------------------------------
-// NOWE PRZEŁĄCZANIE WIDOKÓW PO ZALOGOWANIU
-// --------------------------------------------------
-
-async function openPage(page) {
   if (!state.user) return;
 
   if (isDispatcher()) {
-    await renderDispatchPage("interventions");
-    return;
-  }
+    dispatchRefreshTimer = setInterval(
+      refreshDispatchView,
+      15000
+    );
+  } else {
+    // Pierwsze sprawdzenie następuje od razu po zalogowaniu.
+    checkMyInterventions();
 
-  if (page === "users" && !isAdmin()) {
-    showMessage("Brak uprawnień.", true);
-    return;
-  }
-
-  state.currentPage = page;
-
-  document.querySelectorAll("[data-page]").forEach(button => {
-    button.classList.remove("hidden");
-    button.classList.toggle("active", button.dataset.page === page);
-  });
-
-  if (page === "summary") {
-    await renderSummary();
-  } else if (page === "citizenSearch") {
-    renderCitizenSearch();
-  } else if (page === "users") {
-    await renderUsers();
-  } else if (modules[page]) {
-    await renderModule(page);
+    notificationTimer = setInterval(
+      checkMyInterventions,
+      12000
+    );
   }
 }
 
-async function startApp() {
-  hideScreens();
+// ==================================================
+// START APLIKACJI
+// ==================================================
 
-  try {
-    const status = await api("/api/status");
-
-    if (status.needsSetup) {
-      showScreen("setupScreen");
-      return;
-    }
-
-    const result = await api("/api/me");
-
-    if (result && result.id) {
-      state.user = result;
-      updateUserPanel();
-      showScreen("dashboardScreen");
-
-      startInterventionNotifications();
-      await openPage("summary");
-      return;
-    }
-
-    state.user = null;
-    showScreen("loginScreen");
-  } catch (error) {
-    state.user = null;
-    showScreen("loginScreen");
-  }
-}
-
-// Ponowne uruchomienie aplikacji z nową obsługą ról.
 startApp();
