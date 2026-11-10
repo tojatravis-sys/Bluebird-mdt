@@ -179,6 +179,9 @@ async function initializeDatabase() {
     ALTER TABLE interventions
       ADD COLUMN IF NOT EXISTS callsign TEXT DEFAULT '';
 
+    ALTER TABLE interventions
+      ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
     CREATE INDEX IF NOT EXISTS interventions_status_idx
       ON interventions(status);
 
@@ -425,7 +428,24 @@ const activeInterventionStatuses = [
   'Na miejscu'
 ];
 
+async function unitHasActiveIntervention(client, unitId, exceptInterventionId = null) {
+  const result = await client.query(`
+    SELECT 1
+    FROM interventions
+    WHERE unit_id = $1
+      AND status = ANY($2::text[])
+      AND ($3::integer IS NULL OR id <> $3)
+    LIMIT 1
+  `, [unitId, activeInterventionStatuses, exceptInterventionId]);
+
+  return result.rowCount > 0;
+}
+
 function isUnitAvailable(unit) {
+  if (typeof unit?.available_for_dispatch === 'boolean') {
+    return unit.available_for_dispatch;
+  }
+
   const status = String(unit?.status || '')
     .trim()
     .toLocaleLowerCase('pl-PL')
@@ -676,6 +696,19 @@ for (const [moduleName, config] of Object.entries(modules)) {
            LIMIT 200`,
           fields.map(() => `%${search}%`)
         );
+      } else if (moduleName === 'units') {
+        result = await pool.query(`
+          SELECT u.*,
+            NOT EXISTS (
+              SELECT 1
+              FROM interventions i
+              WHERE i.unit_id = u.id
+                AND i.status = ANY($1::text[])
+            ) AS available_for_dispatch
+          FROM units u
+          ORDER BY u.id DESC
+          LIMIT 200
+        `, [activeInterventionStatuses]);
       } else {
         result = await pool.query(
           `SELECT * FROM ${table} ORDER BY id DESC LIMIT 200`
@@ -1143,6 +1176,8 @@ app.get(
   '/api/interventions',
   requireLogin,
   asyncRoute(async (req, res) => {
+    const archive = req.query.archive === '1';
+
     const result = await pool.query(`
       SELECT i.*,
         u.callsign AS unit_callsign,
@@ -1162,12 +1197,29 @@ app.get(
         ), '[]'::json) AS history
       FROM interventions i
       LEFT JOIN units u ON u.id = i.unit_id
+      WHERE
+        (
+          $1::boolean = false
+          AND (
+            i.status <> 'Zakończona'
+            OR i.completed_at > CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+          )
+        )
+        OR
+        (
+          $1::boolean = true
+          AND i.status = 'Zakończona'
+          AND (
+            i.completed_at IS NULL
+            OR i.completed_at <= CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+          )
+        )
       ORDER BY
         CASE WHEN i.status = 'Zakończona' THEN 1 ELSE 0 END,
-        i.updated_at DESC,
+        COALESCE(i.completed_at, i.updated_at) DESC,
         i.id DESC
       LIMIT 300
-    `);
+    `, [archive]);
 
     res.json(result.rows);
   })
@@ -1236,10 +1288,10 @@ app.post(
           });
         }
 
-        if (!isUnitAvailable(unit)) {
+        if (await unitHasActiveIntervention(client, unit.id)) {
           await client.query('ROLLBACK');
           return res.status(409).json({
-            error: 'Wybrany patrol nie jest dostępny.'
+            error: 'Wybrany patrol jest już przydzielony do aktywnej interwencji.'
           });
         }
       }
@@ -1402,11 +1454,11 @@ app.patch(
 
         if (
           targetUnitId !== current.unit_id &&
-          !isUnitAvailable(targetUnit)
+          await unitHasActiveIntervention(client, targetUnitId, current.id)
         ) {
           await client.query('ROLLBACK');
           return res.status(409).json({
-            error: 'Wybrany patrol nie jest dostępny.'
+            error: 'Wybrany patrol jest już przydzielony do innej aktywnej interwencji.'
           });
         }
       }
@@ -1481,6 +1533,13 @@ app.patch(
         SET status = $1,
             unit_id = $2,
             callsign = $3,
+            completed_at = CASE
+              WHEN $1 = 'Zakończona' AND status <> 'Zakończona'
+                THEN CURRENT_TIMESTAMP
+              WHEN $1 <> 'Zakończona'
+                THEN NULL
+              ELSE completed_at
+            END,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $4
         RETURNING *
