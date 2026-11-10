@@ -673,10 +673,10 @@ for (const [moduleName, config] of Object.entries(modules)) {
       const search = cleanText(req.query.q, 100);
       let result;
 
-      if (search) {
+      if (search && moduleName !== 'units') {
         const fields = searchableFields[moduleName];
         const where = fields
-          .map((field, index) => `${field} ILIKE $${index + 1}`)
+          .map((field, index) => `${field} ILIKE ${index + 1}`)
           .join(' OR ');
 
         result = await pool.query(
@@ -687,6 +687,17 @@ for (const [moduleName, config] of Object.entries(modules)) {
           fields.map(() => `%${search}%`)
         );
       } else if (moduleName === 'units') {
+        const values = [activeInterventionStatuses];
+        const searchClause = search
+          ? `WHERE (
+              u.callsign ILIKE $2 OR
+              u.officers ILIKE $2 OR
+              u.area ILIKE $2
+            )`
+          : '';
+
+        if (search) values.push(`%${search}%`);
+
         result = await pool.query(`
           SELECT u.*,
             NOT EXISTS (
@@ -696,9 +707,10 @@ for (const [moduleName, config] of Object.entries(modules)) {
                 AND i.status = ANY($1::text[])
             ) AS available_for_dispatch
           FROM units u
+          ${searchClause}
           ORDER BY u.id DESC
           LIMIT 200
-        `, [activeInterventionStatuses]);
+        `, values);
       } else {
         result = await pool.query(
           `SELECT * FROM ${table} ORDER BY id DESC LIMIT 200`
