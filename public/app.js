@@ -197,10 +197,8 @@ async function startApp() {
       return;
     }
 
-    const result = await api("/api/me");
-
-    if (result && result.id) {
-      state.user = result;
+    if (status.authenticated && status.user && status.user.id) {
+      state.user = status.user;
 
       updateUserPanel();
       setNavigationVisibility();
