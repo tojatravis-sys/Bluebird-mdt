@@ -268,54 +268,21 @@
   <!-- GŁÓWNY SKRYPT APLIKACJI -->
   <script src="/app.js?v=20261111-1"></script>
 
-  <!-- ANIMACJA STARTOWA -->
+  <!-- Krótki ekran startowy bez sztucznego, pięciosekundowego opóźnienia. -->
   <script>
     (() => {
       const bootScreen = document.getElementById("bootScreen");
       const progressBar = document.getElementById("bootProgressBar");
       const status = document.getElementById("bootStatus");
 
-      if (!bootScreen || !progressBar || !status) {
-        return;
-      }
+      if (progressBar) progressBar.style.width = "100%";
+      if (status) status.textContent = "ŁADOWANIE BLUEBIRD...";
 
-      const stages = [
-        { progress: 0, text: "URUCHAMIANIE SYSTEMU..." },
-        { progress: 25, text: "ŁADOWANIE MODUŁÓW..." },
-        { progress: 50, text: "SPRAWDZANIE SYSTEMU..." },
-        { progress: 75, text: "ŁĄCZENIE Z SERWEREM..." },
-        { progress: 100, text: "SYSTEM GOTOWY" }
-      ];
-
-      const duration = 5000;
-      const interval = 50;
-      const startedAt = Date.now();
-
-      const timer = setInterval(() => {
-        const elapsed = Date.now() - startedAt;
-        const progress = Math.min(
-          100,
-          (elapsed / duration) * 100
-        );
-
-        progressBar.style.width = progress + "%";
-
-        const stage = [...stages]
-          .reverse()
-          .find(item => progress >= item.progress);
-
-        if (stage) {
-          status.textContent = stage.text;
-        }
-
-        if (progress >= 100) {
-          clearInterval(timer);
-
-          setTimeout(() => {
-            bootScreen.classList.add("boot-hidden");
-          }, 300);
-        }
-      }, interval);
+      window.requestAnimationFrame(() => {
+        window.setTimeout(() => {
+          bootScreen?.classList.add("boot-hidden");
+        }, 80);
+      });
     })();
   </script>
 
