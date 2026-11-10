@@ -11,6 +11,8 @@
   --accent: #2878d8;
   --accent-dark: #185cae;
   --danger: #d84e5b;
+  --success: #23865b;
+  --warning: #bd8428;
   --radius: 15px;
   --shadow: 0 8px 24px rgba(34, 60, 90, .07);
 }
@@ -406,7 +408,7 @@ button:active {
   background: #ffe4e6 !important;
 }
 
-/* Tabele i wyniki wyszukiwania */
+/* Tabele */
 
 table {
   width: 100%;
@@ -438,7 +440,7 @@ tr:last-child td {
   border-bottom: 0;
 }
 
-/* Przyciski i dodatkowe elementy formularzy */
+/* Formularze i przyciski */
 
 button:disabled {
   cursor: not-allowed;
@@ -460,7 +462,206 @@ form button:not(.primary-button) {
   margin-bottom: 4px;
 }
 
-/* Dolna część urządzenia */
+/* EKRAN URUCHAMIANIA */
+
+.boot-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 25px;
+  background: radial-gradient(circle at center, #1c3445, #08131c 75%);
+  color: #ffffff;
+  transition: opacity .5s ease, visibility .5s ease;
+}
+
+.boot-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.boot-content {
+  width: min(100%, 360px);
+  text-align: center;
+}
+
+.boot-logo {
+  font-size: 38px;
+  font-weight: 950;
+  letter-spacing: 9px;
+  color: #65adff;
+  text-shadow: 0 0 25px rgba(60, 145, 240, .4);
+}
+
+.boot-subtitle {
+  margin-top: 14px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 2px;
+}
+
+.boot-location {
+  margin-top: 8px;
+  color: #75baff;
+  font-size: 12px;
+  letter-spacing: 5px;
+}
+
+.boot-status {
+  margin-top: 65px;
+  color: #a9c5df;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 2px;
+}
+
+.boot-progress {
+  height: 5px;
+  margin-top: 15px;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #263b4d;
+}
+
+#bootProgressBar {
+  width: 0;
+  height: 100%;
+  border-radius: 10px;
+  background: #4b9bea;
+  box-shadow: 0 0 12px #4b9bea;
+}
+
+.boot-author {
+  margin-top: 65px;
+  color: #71899f;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+/* PANEL DYZURNEGO I INTERWENCJE */
+
+.dispatch-nav {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.dispatch-nav button {
+  min-height: 42px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #ffffff;
+  color: #3b5574;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.dispatch-nav button.active {
+  border-color: #80b4ed;
+  background: #eaf3ff;
+  color: #1765bd;
+}
+
+.intervention-card {
+  padding: 15px;
+  margin-bottom: 12px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  box-shadow: var(--shadow);
+  overflow-wrap: anywhere;
+}
+
+.intervention-card h3 {
+  margin: 0 0 10px;
+  color: #246fca;
+  font-size: 14px;
+}
+
+.intervention-card p {
+  margin: 6px 0;
+  color: #536982;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.intervention-status {
+  display: inline-block;
+  margin: 5px 0 10px;
+  padding: 5px 9px;
+  border-radius: 20px;
+  background: #eaf3ff;
+  color: #1765bd;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.intervention-status.completed {
+  background: #eaf8f0;
+  color: #21764c;
+}
+
+.intervention-status.pending {
+  background: #fff5df;
+  color: #966313;
+}
+
+.intervention-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.intervention-actions button {
+  min-height: 37px;
+  padding: 8px 10px;
+  border: 1px solid #d8e3ef;
+  border-radius: 8px;
+  background: #f1f5fa;
+  color: #3d5878;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.intervention-actions button:disabled {
+  opacity: .5;
+}
+
+.dispatch-unit {
+  padding: 12px;
+  margin-bottom: 9px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.dispatch-unit strong {
+  color: #246fca;
+}
+
+.dispatch-unit p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.dispatch-empty {
+  padding: 18px;
+  text-align: center;
+  color: var(--muted);
+  background: #ffffff;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  font-size: 12px;
+}
+
+/* DOLNA CZESC URZADZENIA */
 
 .device-bottom {
   height: 45px;
@@ -502,6 +703,8 @@ form button:not(.primary-button) {
   text-align: center;
 }
 
+/* TELEFONY */
+
 @media (max-width: 420px) {
   body {
     padding: 5px;
@@ -536,6 +739,17 @@ form button:not(.primary-button) {
   .menu-button {
     min-height: 62px;
     font-size: 9px;
+  }
+
+  .boot-logo {
+    font-size: 32px;
+    letter-spacing: 6px;
+  }
+
+  th,
+  td {
+    padding: 8px 6px;
+    font-size: 10px;
   }
 }
 
