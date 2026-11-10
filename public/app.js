@@ -1242,7 +1242,7 @@ async function renderDispatchInterventions() {
           Brak zarejestrowanych interwencji.
         </div>`;
 
-    await bindInterventionActions();
+    await bindInterventionActions(units);
   } catch (error) {
     const list = $("#dispatchInterventionList");
 
@@ -1354,9 +1354,9 @@ function renderInterventionCard(item) {
   `;
 }
 
-async function bindInterventionActions() {
+async function bindInterventionActions(loadedUnits = null) {
   try {
-    const units = await api("/api/units");
+    const units = loadedUnits || await api("/api/units");
 
     document.querySelectorAll("[data-intervention-unit]").forEach(select => {
       const interventionId = select.dataset.interventionUnit;
@@ -1494,69 +1494,58 @@ async function renderDispatchUnits() {
 // HISTORIA
 // ==================================================
 
+async function loadDispatchHistoryList() {
+  const list = $("#dispatchHistoryList");
+  if (!list) return;
+
+  try {
+    const completed = await api("/api/interventions?archive=1");
+
+    list.innerHTML = completed.length
+      ? completed.map(item => `
+        <div class="dispatch-intervention">
+          <strong>${escapeHtml(item.incident_number || `INT-${item.id}`)}</strong>
+          <p>Adres: ${escapeHtml(item.address)}</p>
+          <p>Opis: ${escapeHtml(item.description)}</p>
+          <p>Patrol: ${escapeHtml(item.unit_callsign || item.callsign || "Nieprzydzielony")}</p>
+          <p>Zakończono: ${escapeHtml(dispatchDate(item.completed_at || item.updated_at))}</p>
+          <details>
+            <summary>Pokaż historię zmian</summary>
+            ${(item.history || []).map(entry => `
+              <div class="dispatch-history">
+                <strong>${escapeHtml(entry.event)}</strong>
+                <p>${escapeHtml(entry.details || "")}</p>
+                <small>${escapeHtml(entry.actor_name || "System")} — ${escapeHtml(dispatchDate(entry.created_at))}</small>
+              </div>
+            `).join("")}
+          </details>
+        </div>
+      `).join("")
+      : `<div class="dispatch-empty">Nie ma jeszcze zakończonych interwencji.</div>`;
+  } catch (error) {
+    list.textContent = error.message;
+  }
+}
+
 async function renderDispatchHistory() {
   contentArea.innerHTML = `
     <div class="section-title">TABLET DYŻURNEGO</div>
-
     <div class="dispatch-wrap">
       ${dispatchNav("history")}
-
       <section class="dispatch-card">
-        <h2>HISTORIA INTERWENCJI</h2>
+        <div class="dispatch-toolbar">
+          <h2>HISTORIA INTERWENCJI</h2>
+          <button type="button" id="dispatchHistoryRefresh" class="dispatch-action">ODŚWIEŻ</button>
+        </div>
         <div id="dispatchHistoryList">Ładowanie...</div>
       </section>
     </div>
   `;
 
   bindDispatchNav();
-
-  try {
-    const completed = await api("/api/interventions?archive=1");
-
-    $("#dispatchHistoryList").innerHTML = completed.length
-      ? completed.map(item => `
-        <div class="dispatch-intervention">
-          <strong>
-            ${escapeHtml(item.incident_number || `INT-${item.id}`)}
-          </strong>
-
-          <p>Adres: ${escapeHtml(item.address)}</p>
-          <p>Opis: ${escapeHtml(item.description)}</p>
-          <p>Patrol:
-            ${escapeHtml(item.unit_callsign || item.callsign || "Nieprzydzielony")}
-          </p>
-
-          <p>Zakończono / zmieniono:
-            ${escapeHtml(dispatchDate(item.updated_at))}
-          </p>
-
-          <details>
-            <summary>Pokaż historię zmian</summary>
-
-            ${(item.history || []).map(entry => `
-              <div class="dispatch-history">
-                <strong>${escapeHtml(entry.event)}</strong>
-                <p>${escapeHtml(entry.details || "")}</p>
-                <small>
-                  ${escapeHtml(entry.actor_name || "System")} —
-                  ${escapeHtml(dispatchDate(entry.created_at))}
-                </small>
-              </div>
-            `).join("")}
-          </details>
-        </div>
-      `).join("")
-      : `<div class="dispatch-empty">
-          Nie ma jeszcze zakończonych interwencji.
-        </div>`;
-  } catch (error) {
-    $("#dispatchHistoryList").textContent = error.message;
-  }
+  $("#dispatchHistoryRefresh")?.addEventListener("click", loadDispatchHistoryList);
+  await loadDispatchHistoryList();
 }
-
-// ==================================================
-// AUTOMATYCZNE ODŚWIEŻANIE TABLETU
-// ==================================================
 
 async function refreshDispatchView() {
   if (!state.user || !isDispatcher()) return;
@@ -1616,7 +1605,7 @@ async function refreshDispatchView() {
     }
 
     if (state.dispatchPage === "history") {
-      await renderDispatchHistory();
+      await loadDispatchHistoryList();
     }
   } catch {
     // Chwilowy brak połączenia nie przerywa pracy tabletu.
