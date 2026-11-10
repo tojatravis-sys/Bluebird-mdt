@@ -629,31 +629,16 @@ app.get(
   requireLogin,
   requireFunctionary,
   asyncRoute(async (req, res) => {
-    const tables = [
-      'people',
-      'vehicles',
-      'citations',
-      'reports',
-      'units'
-    ];
+    const result = await pool.query(`
+      SELECT
+        (SELECT COUNT(*)::int FROM people) AS people,
+        (SELECT COUNT(*)::int FROM vehicles) AS vehicles,
+        (SELECT COUNT(*)::int FROM citations) AS citations,
+        (SELECT COUNT(*)::int FROM reports) AS reports,
+        (SELECT COUNT(*)::int FROM units) AS units
+    `);
 
-    const counts = await Promise.all(
-      tables.map(async table => {
-        const result = await pool.query(
-          `SELECT COUNT(*)::int AS count FROM ${table}`
-        );
-
-        return result.rows[0].count;
-      })
-    );
-
-    res.json({
-      people: counts[0],
-      vehicles: counts[1],
-      citations: counts[2],
-      reports: counts[3],
-      units: counts[4]
-    });
+    res.json(result.rows[0]);
   })
 );
 
