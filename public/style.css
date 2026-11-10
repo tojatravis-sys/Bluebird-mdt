@@ -762,3 +762,157 @@ form button:not(.primary-button) {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* DESKTOPOWY UKŁAD STANOWISKA DYŻURNEGO */
+@media (min-width: 900px) {
+  body {
+    align-items: stretch;
+    padding: 0;
+    background: #dce4ee;
+  }
+
+  .device {
+    width: 100%;
+    min-height: 100vh;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: #eef3f8;
+    box-shadow: none;
+  }
+
+  .device-top,
+  .device-bottom {
+    display: none;
+  }
+
+  .screen {
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+    overflow: visible;
+    background: #f3f6fa;
+  }
+
+  .app-header {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 22px;
+    padding: 18px 34px;
+    text-align: left;
+  }
+
+  .app-logo { font-size: 25px; }
+  .app-unit { margin: 0; font-size: 11px; }
+  .app-location { margin: 0 0 0 auto; }
+
+  .screen-section {
+    width: min(100%, 1600px);
+    margin: 0 auto;
+    padding: 28px 36px;
+  }
+
+  .menu-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .menu-button {
+    min-height: 58px;
+    font-size: 12px;
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .content-area {
+    width: 100%;
+    padding: 8px 0 30px;
+  }
+
+  .screen-section:has(.dispatch-wrap) {
+    width: 100%;
+    max-width: none;
+  }
+
+  .screen .dispatch-wrap {
+    width: min(100%, 1700px);
+    margin: 0 auto;
+    padding: 0 34px 34px;
+    grid-template-columns: minmax(300px, 0.85fr) minmax(0, 1.6fr);
+    align-items: start;
+    gap: 20px;
+  }
+
+  .screen .dispatch-wrap > .dispatch-nav {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 10px;
+    padding: 12px 16px;
+    border: 1px solid #cbd7e5;
+    border-radius: 12px;
+    background: #fff;
+  }
+
+  .screen .dispatch-nav button {
+    min-width: 150px;
+    min-height: 44px;
+    font-size: 12px;
+  }
+
+  .screen .dispatch-card {
+    padding: 22px;
+    border-radius: 14px;
+    box-shadow: 0 5px 18px rgba(28, 48, 70, .08);
+  }
+
+  .screen .dispatch-card h2 {
+    font-size: 17px;
+    letter-spacing: .5px;
+  }
+
+  .screen .dispatch-card input,
+  .screen .dispatch-card select,
+  .screen .dispatch-card textarea {
+    min-height: 44px;
+    font-size: 14px;
+  }
+
+  .screen .dispatch-intervention {
+    padding: 18px;
+    margin: 0 0 14px;
+    background: #1b2b3d;
+  }
+
+  .screen .dispatch-intervention p {
+    font-size: 13px;
+  }
+
+  .screen .dispatch-action {
+    min-height: 42px;
+    padding: 10px 16px;
+    font-size: 12px;
+  }
+
+  .page-footer { display: none; }
+}
+
+@media (min-width: 1300px) {
+  .screen .dispatch-wrap {
+    grid-template-columns: minmax(360px, 0.75fr) minmax(0, 1.8fr);
+  }
+
+  .screen .dispatch-intervention {
+    display: inline-block;
+    vertical-align: top;
+    width: calc(50% - 9px);
+    margin-right: 12px;
+  }
+
+  .screen .dispatch-intervention:nth-of-type(2n) {
+    margin-right: 0;
+  }
+}
