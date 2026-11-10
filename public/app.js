@@ -29,6 +29,16 @@ const dispatchStatuses = [
 
 const dispatchPriorities = ["Niski", "Normalny", "Wysoki", "Pilny"];
 
+function isUnitAvailable(unit) {
+  const status = String(unit?.status || "")
+    .trim()
+    .toLocaleLowerCase("pl-PL")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return ["dostepny", "wolny", "available"].includes(status);
+}
+
 // ==================================================
 // PODSTAWOWE FUNKCJE
 // ==================================================
@@ -445,7 +455,9 @@ async function openPage(page) {
     }
   });
 
-  if (page === "summary") {
+  if (page === "interventions") {
+    await renderInterventionsBoard();
+  } else if (page === "summary") {
     await renderSummary();
   } else if (page === "citizenSearch") {
     renderCitizenSearch();
@@ -461,6 +473,68 @@ document.querySelectorAll("[data-page]").forEach(button => {
     openPage(button.dataset.page);
   });
 });
+
+// ==================================================
+// WSPÓLNA LISTA INTERWENCJI W BLUEBIRD
+// ==================================================
+
+async function renderInterventionsBoard() {
+  state.currentPage = "interventions";
+
+  contentArea.innerHTML = `
+    <div class="section-title">INTERWENCJE</div>
+    <section class="panel">
+      <div class="dispatch-toolbar">
+        <h2>REJESTR INTERWENCJI</h2>
+        <button type="button" id="refreshBluebirdInterventions"
+          class="small-button">ODŚWIEŻ</button>
+      </div>
+      <div id="bluebirdInterventionsList">Ładowanie interwencji...</div>
+    </section>
+  `;
+
+  const list = $("#bluebirdInterventionsList");
+  const refresh = $("#refreshBluebirdInterventions");
+
+  async function loadInterventions() {
+    if (!list) return;
+    list.textContent = "Pobieranie interwencji...";
+
+    try {
+      const interventions = await api("/api/interventions");
+
+      list.innerHTML = interventions.length
+        ? interventions.map(item => {
+            const statusClass = item.status === "Zakończona"
+              ? "completed"
+              : item.status === "Oczekuje na przydział"
+                ? "pending"
+                : "";
+
+            return `
+              <article class="intervention-card">
+                <h3>${escapeHtml(item.incident_number || `INT-${item.id}`)}</h3>
+                <span class="intervention-status ${statusClass}">
+                  ${escapeHtml(item.status || "Nieznany")}
+                </span>
+                <p><strong>Adres:</strong> ${escapeHtml(item.address || "Nie podano")}</p>
+                <p><strong>Zgłaszający:</strong> ${escapeHtml(item.reporter || "Nie podano")}</p>
+                <p><strong>Opis:</strong> ${escapeHtml(item.description || "")}</p>
+                <p><strong>Priorytet:</strong> ${escapeHtml(item.priority || "Normalny")}</p>
+                <p><strong>Patrol:</strong> ${escapeHtml(item.unit_callsign || item.callsign || "Nieprzydzielony")}</p>
+                <p><strong>Utworzono:</strong> ${escapeHtml(dispatchDate(item.created_at))}</p>
+              </article>
+            `;
+          }).join("")
+        : '<div class="dispatch-empty">Brak zarejestrowanych interwencji.</div>';
+    } catch (error) {
+      list.textContent = "Nie udało się pobrać interwencji: " + error.message;
+    }
+  }
+
+  refresh?.addEventListener("click", loadInterventions);
+  await loadInterventions();
+}
 
 // ==================================================
 // PULPIT
@@ -1146,18 +1220,17 @@ async function renderDispatchInterventions() {
 
     state.records.interventions = interventions;
 
-    const availableUnits = units.filter(unit =>
-      unit.status === "Dostępny"
-    );
-
     $("#newInterventionUnit").innerHTML =
       `<option value="">Bez przydziału — oczekuje</option>` +
-      availableUnits.map(unit => `
-        <option value="${unit.id}">
-          ${escapeHtml(unit.callsign)} —
-          ${escapeHtml(unit.officers || "Brak danych")}
-        </option>
-      `).join("");
+      (units.length
+        ? units.map(unit => `
+            <option value="${unit.id}" ${isUnitAvailable(unit) ? "" : "disabled"}>
+              ${escapeHtml(unit.callsign)} —
+              ${escapeHtml(unit.officers || "Brak danych")}
+              (${escapeHtml(unit.status || "Status nieznany")})
+            </option>
+          `).join("")
+        : '<option value="" disabled>Brak patroli w bazie</option>');
 
     $("#dispatchInterventionList").innerHTML = interventions.length
       ? interventions.map(renderInterventionCard).join("")
@@ -1291,7 +1364,7 @@ async function bindInterventionActions() {
       const currentUnitId = intervention?.unit_id;
 
       const options = units.filter(unit =>
-        unit.status === "Dostępny" ||
+        isUnitAvailable(unit) ||
         String(unit.id) === String(currentUnitId)
       );
 
