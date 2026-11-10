@@ -1,4 +1,3 @@
-
 "use strict";
 
 const $ = (selector) => document.querySelector(selector);
@@ -80,6 +79,11 @@ function isAdmin() {
     state.user?.role_group === "Komendantura";
 }
 
+function isDispatcher() {
+  return state.user?.roleGroup === "DYŻURNY" ||
+    state.user?.role_group === "DYŻURNY";
+}
+
 function updateUserPanel() {
   const name = $("#welcomeName");
   const details = $("#userDetails");
@@ -115,24 +119,26 @@ async function startApp() {
       return;
     }
 
-    try {
-      const result = await api("/api/me");
+    const result = await api("/api/me");
 
-      if (result.authenticated && result.user) {
-        state.user = result.user;
-        updateUserPanel();
-        showScreen("dashboardScreen");
+    if (result && result.id) {
+      state.user = result;
+      updateUserPanel();
+      showScreen("dashboardScreen");
+
+      if (isDispatcher()) {
+        showMessage("Zalogowano na konto Dyżurnego.");
         await openPage("summary");
-        return;
+      } else {
+        await openPage("summary");
       }
-    } catch {
-      // Brak aktywnej sesji — pokaż logowanie.
+
+      return;
     }
 
     showScreen("loginScreen");
-  } catch (error) {
+  } catch {
     showScreen("loginScreen");
-    showMessage("Nie można połączyć się z serwerem: " + error.message, true);
   }
 }
 
@@ -183,6 +189,11 @@ $("#loginForm")?.addEventListener("submit", async event => {
 
     updateUserPanel();
     showScreen("dashboardScreen");
+
+    if (isDispatcher()) {
+      showMessage("Zalogowano na konto Dyżurnego.");
+    }
+
     await openPage("summary");
   } catch (error) {
     showMessage(error.message, true);
@@ -195,7 +206,7 @@ $("#logoutButton")?.addEventListener("click", async () => {
   try {
     await api("/api/logout", { method: "POST" });
   } catch {
-    // Niezależnie od odpowiedzi serwera wróć do logowania.
+    // Powrót do ekranu logowania niezależnie od odpowiedzi serwera.
   }
 
   state.user = null;
@@ -316,6 +327,11 @@ async function openPage(page) {
 
   if (page === "users" && !isAdmin()) {
     showMessage("Brak uprawnień.", true);
+    return;
+  }
+
+  if (isDispatcher() && page !== "summary") {
+    showMessage("Konto Dyżurnego nie ma dostępu do tego modułu.", true);
     return;
   }
 
@@ -519,8 +535,15 @@ async function renderUsers() {
       <div class="section-title">ZARZĄDZANIE DOSTĘPAMI</div>
 
       <section class="panel">
-        <h2>UTWÓRZ KONTO FUNKCJONARIUSZA</h2>
+        <h2>UTWÓRZ NOWE KONTO</h2>
+
         <form id="userForm">
+          <label>Rodzaj konta</label>
+          <select name="role_group" id="accountRole">
+            <option value="Funkcjonariusz">Funkcjonariusz</option>
+            <option value="DYŻURNY">Dyżurny</option>
+          </select>
+
           <label>Login</label>
           <input name="username" required minlength="3" autocomplete="off">
 
@@ -533,43 +556,45 @@ async function renderUsers() {
           <label>Numer odznaki</label>
           <input name="badge">
 
-          <label>Stopień</label>
-<select name="rank" required>
-  <optgroup label="KORPUS SZEREGOWYCH">
-    <option value="Posterunkowy">Posterunkowy</option>
-    <option value="Starszy posterunkowy">Starszy posterunkowy</option>
-  </optgroup>
+          <div id="rankContainer">
+            <label>Stopień</label>
+            <select name="rank" id="accountRank" required>
+              <optgroup label="KORPUS SZEREGOWYCH">
+                <option value="Posterunkowy">Posterunkowy</option>
+                <option value="Starszy posterunkowy">Starszy posterunkowy</option>
+              </optgroup>
 
-  <optgroup label="KORPUS PODOFICERÓW">
-    <option value="Sierżant">Sierżant</option>
-    <option value="Starszy sierżant">Starszy sierżant</option>
-    <option value="Sierżant sztabowy">Sierżant sztabowy</option>
-  </optgroup>
+              <optgroup label="KORPUS PODOFICERÓW">
+                <option value="Sierżant">Sierżant</option>
+                <option value="Starszy sierżant">Starszy sierżant</option>
+                <option value="Sierżant sztabowy">Sierżant sztabowy</option>
+              </optgroup>
 
-  <optgroup label="KORPUS ASPIRANTÓW">
-    <option value="Młodszy aspirant">Młodszy aspirant</option>
-    <option value="Aspirant">Aspirant</option>
-    <option value="Starszy aspirant">Starszy aspirant</option>
-    <option value="Aspirant sztabowy">Aspirant sztabowy</option>
-  </optgroup>
+              <optgroup label="KORPUS ASPIRANTÓW">
+                <option value="Młodszy aspirant">Młodszy aspirant</option>
+                <option value="Aspirant">Aspirant</option>
+                <option value="Starszy aspirant">Starszy aspirant</option>
+                <option value="Aspirant sztabowy">Aspirant sztabowy</option>
+              </optgroup>
 
-  <optgroup label="KORPUS OFICERÓW MŁODSZYCH">
-    <option value="Podkomisarz">Podkomisarz</option>
-    <option value="Komisarz">Komisarz</option>
-    <option value="Nadkomisarz">Nadkomisarz</option>
-  </optgroup>
+              <optgroup label="KORPUS OFICERÓW MŁODSZYCH">
+                <option value="Podkomisarz">Podkomisarz</option>
+                <option value="Komisarz">Komisarz</option>
+                <option value="Nadkomisarz">Nadkomisarz</option>
+              </optgroup>
 
-  <optgroup label="KORPUS OFICERÓW STARSZYCH">
-    <option value="Podinspektor">Podinspektor</option>
-    <option value="Młodszy inspektor">Młodszy inspektor</option>
-    <option value="Inspektor">Inspektor</option>
-  </optgroup>
+              <optgroup label="KORPUS OFICERÓW STARSZYCH">
+                <option value="Podinspektor">Podinspektor</option>
+                <option value="Młodszy inspektor">Młodszy inspektor</option>
+                <option value="Inspektor">Inspektor</option>
+              </optgroup>
 
-  <optgroup label="KORPUS GENERAŁÓW">
-    <option value="Nadinspektor">Nadinspektor</option>
-    <option value="Generalny inspektor">Generalny inspektor</option>
-  </optgroup>
-</select>
+              <optgroup label="KORPUS GENERAŁÓW">
+                <option value="Nadinspektor">Nadinspektor</option>
+                <option value="Generalny inspektor">Generalny inspektor</option>
+              </optgroup>
+            </select>
+          </div>
 
           <button class="primary-button" type="submit">UTWÓRZ KONTO</button>
         </form>
@@ -581,10 +606,25 @@ async function renderUsers() {
       </section>
     `;
 
-    $("#userForm").addEventListener("submit", async event => {
+    const form = $("#userForm");
+    const roleSelect = $("#accountRole");
+    const rankSelect = $("#accountRank");
+    const rankContainer = $("#rankContainer");
+
+    function updateRankVisibility() {
+      const isDispatcherAccount = roleSelect.value === "DYŻURNY";
+
+      rankContainer.classList.toggle("hidden", isDispatcherAccount);
+      rankSelect.required = !isDispatcherAccount;
+      rankSelect.disabled = isDispatcherAccount;
+    }
+
+    roleSelect.addEventListener("change", updateRankVisibility);
+    updateRankVisibility();
+
+    form.addEventListener("submit", async event => {
       event.preventDefault();
 
-      const form = event.currentTarget;
       const button = form.querySelector('button[type="submit"]');
       button.disabled = true;
 
@@ -596,8 +636,10 @@ async function renderUsers() {
             password: form.elements.password.value,
             display_name: form.elements.display_name.value.trim(),
             badge: form.elements.badge.value.trim(),
-            rank: form.elements.rank.value,
-            role_group: "Funkcjonariusz"
+            rank: roleSelect.value === "DYŻURNY"
+              ? "Dyżurny"
+              : rankSelect.value,
+            role_group: roleSelect.value
           })
         });
 
@@ -621,13 +663,18 @@ async function renderUsers() {
       <div class="user-row">
         <strong>${escapeHtml(user.display_name || user.username)}</strong>
         <p>Login: ${escapeHtml(user.username)}</p>
+        <p>Rodzaj konta: ${escapeHtml(user.role_group || "Funkcjonariusz")}</p>
         <p>Stopień: ${escapeHtml(user.rank || "Nieustalony")}</p>
         <p>Odznaka: ${escapeHtml(user.badge || "Brak")}</p>
         <p>Status: ${user.active ? "Aktywne" : "Nieaktywne"}</p>
+
         <button type="button" data-toggle="${user.id}">
           ${user.active ? "DEZAKTYWUJ" : "AKTYWUJ"}
         </button>
-        <button type="button" data-delete="${user.id}">USUŃ KONTO</button>
+
+        <button type="button" data-delete="${user.id}">
+          USUŃ KONTO
+        </button>
       </div>
     `).join("");
 
