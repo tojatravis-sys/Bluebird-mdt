@@ -1656,7 +1656,7 @@ app.get(
 // PLIKI STRONY I BŁĘDY
 // --------------------------------------------------
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1d', etag: true, lastModified: true }));
 
 app.get('/', (req, res) => {
   res.sendFile(

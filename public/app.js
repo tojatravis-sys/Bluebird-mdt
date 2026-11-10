@@ -977,18 +977,19 @@ dispatchStyle.textContent = `
 
   .dispatch-nav button,
   .dispatch-action {
-    border:1px solid #526477;
+    border:1px solid #d6e0ec;
     border-radius:8px;
     padding:10px 14px;
-    background:#172536;
-    color:#fff;
+    background:#f3f6fa;
+    color:#3b5574;
     cursor:pointer;
   }
 
   .dispatch-nav button.active,
   .dispatch-action.primary {
-    background:#1765a5;
-    border-color:#268bd2;
+    background:#eaf3ff;
+    color:#1765bd;
+    border-color:#80b4ed;
   }
 
   .dispatch-grid {
@@ -998,13 +999,14 @@ dispatchStyle.textContent = `
   }
 
   .dispatch-card {
-    background:rgba(20,35,52,.9);
-    border:1px solid #40546b;
+    background:#ffffff;
+    color:#172b46;
+    border:1px solid #dce4ef;
     border-radius:10px;
     padding:14px;
   }
 
-  .dispatch-card h3 { margin-top:0; }
+  .dispatch-card h2, .dispatch-card h3 { margin-top:0; color:#304b6d; }
 
   .dispatch-card label {
     display:block;
@@ -1019,8 +1021,8 @@ dispatchStyle.textContent = `
     padding:10px;
     border-radius:6px;
     border:1px solid #526477;
-    background:#101c2a;
-    color:#fff;
+    background:#ffffff;
+    color:#172b46;
   }
 
   .dispatch-card textarea {
@@ -1029,30 +1031,33 @@ dispatchStyle.textContent = `
   }
 
   .dispatch-intervention {
-    border:1px solid #40546b;
+    background:#ffffff;
+    color:#172b46;
+    border:1px solid #dce4ef;
     border-radius:10px;
     padding:14px;
     margin:12px 0;
   }
 
-  .dispatch-intervention p { overflow-wrap:anywhere; }
+  .dispatch-intervention p { overflow-wrap:anywhere; color:#536982; }
 
   .dispatch-status {
     display:inline-block;
     padding:5px 9px;
     border-radius:6px;
-    background:#263c53;
+    background:#eaf3ff;
+    color:#1765bd;
     margin:4px 0;
   }
 
   .dispatch-history {
-    border-left:2px solid #526477;
+    border-left:2px solid #b8d3f1;
     padding-left:12px;
     margin:12px 0;
   }
 
   .dispatch-muted {
-    opacity:.75;
+    color:#75869c;
     font-size:.9em;
   }
 
@@ -1068,15 +1073,20 @@ dispatchStyle.textContent = `
 
   .dispatch-unit {
     padding:10px;
-    border:1px solid #40546b;
+    border:1px solid #dce4ef;
     border-radius:8px;
+    background:#ffffff;
+    color:#172b46;
     margin:7px 0;
   }
 
   .dispatch-empty {
     padding:18px;
     text-align:center;
-    opacity:.75;
+    color:#75869c;
+    background:#ffffff;
+    border:1px dashed #dce4ef;
+    border-radius:10px;
   }
 
   @media(max-width:600px) {
@@ -1242,7 +1252,7 @@ async function renderDispatchInterventions() {
           Brak zarejestrowanych interwencji.
         </div>`;
 
-    await bindInterventionActions();
+    await bindInterventionActions(units);
   } catch (error) {
     const list = $("#dispatchInterventionList");
 
@@ -1354,9 +1364,9 @@ function renderInterventionCard(item) {
   `;
 }
 
-async function bindInterventionActions() {
+async function bindInterventionActions(loadedUnits = null) {
   try {
-    const units = await api("/api/units");
+    const units = loadedUnits || await api("/api/units");
 
     document.querySelectorAll("[data-intervention-unit]").forEach(select => {
       const interventionId = select.dataset.interventionUnit;
@@ -1494,69 +1504,58 @@ async function renderDispatchUnits() {
 // HISTORIA
 // ==================================================
 
+async function loadDispatchHistoryList() {
+  const list = $("#dispatchHistoryList");
+  if (!list) return;
+
+  try {
+    const completed = await api("/api/interventions?archive=1");
+
+    list.innerHTML = completed.length
+      ? completed.map(item => `
+        <div class="dispatch-intervention">
+          <strong>${escapeHtml(item.incident_number || `INT-${item.id}`)}</strong>
+          <p>Adres: ${escapeHtml(item.address)}</p>
+          <p>Opis: ${escapeHtml(item.description)}</p>
+          <p>Patrol: ${escapeHtml(item.unit_callsign || item.callsign || "Nieprzydzielony")}</p>
+          <p>Zakończono: ${escapeHtml(dispatchDate(item.completed_at || item.updated_at))}</p>
+          <details>
+            <summary>Pokaż historię zmian</summary>
+            ${(item.history || []).map(entry => `
+              <div class="dispatch-history">
+                <strong>${escapeHtml(entry.event)}</strong>
+                <p>${escapeHtml(entry.details || "")}</p>
+                <small>${escapeHtml(entry.actor_name || "System")} — ${escapeHtml(dispatchDate(entry.created_at))}</small>
+              </div>
+            `).join("")}
+          </details>
+        </div>
+      `).join("")
+      : `<div class="dispatch-empty">Nie ma jeszcze zakończonych interwencji.</div>`;
+  } catch (error) {
+    list.textContent = error.message;
+  }
+}
+
 async function renderDispatchHistory() {
   contentArea.innerHTML = `
     <div class="section-title">TABLET DYŻURNEGO</div>
-
     <div class="dispatch-wrap">
       ${dispatchNav("history")}
-
       <section class="dispatch-card">
-        <h2>HISTORIA INTERWENCJI</h2>
+        <div class="dispatch-toolbar">
+          <h2>HISTORIA INTERWENCJI</h2>
+          <button type="button" id="dispatchHistoryRefresh" class="dispatch-action">ODŚWIEŻ</button>
+        </div>
         <div id="dispatchHistoryList">Ładowanie...</div>
       </section>
     </div>
   `;
 
   bindDispatchNav();
-
-  try {
-    const completed = await api("/api/interventions?archive=1");
-
-    $("#dispatchHistoryList").innerHTML = completed.length
-      ? completed.map(item => `
-        <div class="dispatch-intervention">
-          <strong>
-            ${escapeHtml(item.incident_number || `INT-${item.id}`)}
-          </strong>
-
-          <p>Adres: ${escapeHtml(item.address)}</p>
-          <p>Opis: ${escapeHtml(item.description)}</p>
-          <p>Patrol:
-            ${escapeHtml(item.unit_callsign || item.callsign || "Nieprzydzielony")}
-          </p>
-
-          <p>Zakończono / zmieniono:
-            ${escapeHtml(dispatchDate(item.updated_at))}
-          </p>
-
-          <details>
-            <summary>Pokaż historię zmian</summary>
-
-            ${(item.history || []).map(entry => `
-              <div class="dispatch-history">
-                <strong>${escapeHtml(entry.event)}</strong>
-                <p>${escapeHtml(entry.details || "")}</p>
-                <small>
-                  ${escapeHtml(entry.actor_name || "System")} —
-                  ${escapeHtml(dispatchDate(entry.created_at))}
-                </small>
-              </div>
-            `).join("")}
-          </details>
-        </div>
-      `).join("")
-      : `<div class="dispatch-empty">
-          Nie ma jeszcze zakończonych interwencji.
-        </div>`;
-  } catch (error) {
-    $("#dispatchHistoryList").textContent = error.message;
-  }
+  $("#dispatchHistoryRefresh")?.addEventListener("click", loadDispatchHistoryList);
+  await loadDispatchHistoryList();
 }
-
-// ==================================================
-// AUTOMATYCZNE ODŚWIEŻANIE TABLETU
-// ==================================================
 
 async function refreshDispatchView() {
   if (!state.user || !isDispatcher()) return;
@@ -1616,7 +1615,7 @@ async function refreshDispatchView() {
     }
 
     if (state.dispatchPage === "history") {
-      await renderDispatchHistory();
+      await loadDispatchHistoryList();
     }
   } catch {
     // Chwilowy brak połączenia nie przerywa pracy tabletu.
