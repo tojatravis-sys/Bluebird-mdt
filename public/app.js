@@ -977,18 +977,19 @@ dispatchStyle.textContent = `
 
   .dispatch-nav button,
   .dispatch-action {
-    border:1px solid #526477;
+    border:1px solid #d6e0ec;
     border-radius:8px;
     padding:10px 14px;
-    background:#172536;
-    color:#fff;
+    background:#f3f6fa;
+    color:#3b5574;
     cursor:pointer;
   }
 
   .dispatch-nav button.active,
   .dispatch-action.primary {
-    background:#1765a5;
-    border-color:#268bd2;
+    background:#eaf3ff;
+    color:#1765bd;
+    border-color:#80b4ed;
   }
 
   .dispatch-grid {
@@ -1030,7 +1031,9 @@ dispatchStyle.textContent = `
   }
 
   .dispatch-intervention {
-    border:1px solid #40546b;
+    background:#ffffff;
+    color:#172b46;
+    border:1px solid #dce4ef;
     border-radius:10px;
     padding:14px;
     margin:12px 0;
@@ -1070,15 +1073,20 @@ dispatchStyle.textContent = `
 
   .dispatch-unit {
     padding:10px;
-    border:1px solid #40546b;
+    border:1px solid #dce4ef;
     border-radius:8px;
+    background:#ffffff;
+    color:#172b46;
     margin:7px 0;
   }
 
   .dispatch-empty {
     padding:18px;
     text-align:center;
-    opacity:.75;
+    color:#75869c;
+    background:#ffffff;
+    border:1px dashed #dce4ef;
+    border-radius:10px;
   }
 
   @media(max-width:600px) {
