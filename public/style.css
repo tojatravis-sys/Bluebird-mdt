@@ -863,6 +863,10 @@ form button:not(.primary-button) {
     font-size: 12px;
   }
 
+  .screen .dispatch-wrap:has(> .dispatch-card:only-of-type) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .screen .dispatch-card {
     padding: 22px;
     border-radius: 14px;
