@@ -793,6 +793,8 @@ for (const [moduleName, config] of Object.entries(modules)) {
     })
   );
 
+  // Usuwanie wpisów. Patrolu przypisanego do aktywnej
+  // interwencji nie można usunąć, dopóki interwencja trwa.
   app.delete(
     `${endpoint}/:id`,
     requireLogin,
@@ -804,6 +806,22 @@ for (const [moduleName, config] of Object.entries(modules)) {
         return res.status(400).json({
           error: 'Nieprawidłowy identyfikator.'
         });
+      }
+
+      if (moduleName === 'units') {
+        const activeIntervention = await pool.query(`
+          SELECT id, incident_number
+          FROM interventions
+          WHERE unit_id = $1
+            AND status = ANY($2::text[])
+          LIMIT 1
+        `, [id, activeInterventionStatuses]);
+
+        if (activeIntervention.rowCount) {
+          return res.status(409).json({
+            error: 'Nie można usunąć patrolu przypisanego do aktywnej interwencji. Najpierw zakończ interwencję lub zmień jej przydział.'
+          });
+        }
       }
 
       const result = await pool.query(
