@@ -30,6 +30,10 @@ const dispatchStatuses = [
 const dispatchPriorities = ["Niski", "Normalny", "Wysoki", "Pilny"];
 
 function isUnitAvailable(unit) {
+  if (typeof unit?.available_for_dispatch === "boolean") {
+    return unit.available_for_dispatch;
+  }
+
   const status = String(unit?.status || "")
     .trim()
     .toLocaleLowerCase("pl-PL")
@@ -1363,21 +1367,23 @@ async function bindInterventionActions() {
 
       const currentUnitId = intervention?.unit_id;
 
-      const options = units.filter(unit =>
-        isUnitAvailable(unit) ||
-        String(unit.id) === String(currentUnitId)
-      );
-
       select.innerHTML =
         `<option value="">Bez patrolu</option>` +
-        options.map(unit => `
-          <option value="${unit.id}"
-            ${String(unit.id) === String(currentUnitId) ? "selected" : ""}>
-            ${escapeHtml(unit.callsign)} —
-            ${escapeHtml(unit.officers || "Brak danych")}
-            (${escapeHtml(unit.status)})
-          </option>
-        `).join("");
+        units.map(unit => {
+          const current = String(unit.id) === String(currentUnitId);
+          const available = isUnitAvailable(unit);
+          const disabled = !available && !current;
+
+          return `
+            <option value="${unit.id}"
+              ${current ? "selected" : ""}
+              ${disabled ? "disabled" : ""}>
+              ${escapeHtml(unit.callsign)} —
+              ${escapeHtml(unit.officers || "Brak danych")}
+              (${current ? "przydzielony do tej interwencji" : available ? "Dostępny" : "Zajęty — inna interwencja"})
+            </option>
+          `;
+        }).join("");
     });
 
     document.querySelectorAll("[data-save-intervention]").forEach(button => {
@@ -1505,11 +1511,7 @@ async function renderDispatchHistory() {
   bindDispatchNav();
 
   try {
-    const interventions = await api("/api/interventions");
-
-    const completed = interventions.filter(item =>
-      item.status === "Zakończona"
-    );
+    const completed = await api("/api/interventions?archive=1");
 
     $("#dispatchHistoryList").innerHTML = completed.length
       ? completed.map(item => `
