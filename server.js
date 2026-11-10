@@ -182,6 +182,11 @@ async function initializeDatabase() {
     ALTER TABLE interventions
       ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 
+    UPDATE interventions
+    SET completed_at = updated_at
+    WHERE status = 'Zakończona'
+      AND completed_at IS NULL;
+
     CREATE INDEX IF NOT EXISTS interventions_status_idx
       ON interventions(status);
 
