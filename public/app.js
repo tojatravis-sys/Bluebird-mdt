@@ -1231,7 +1231,7 @@ async function renderDispatchInterventions() {
             <option value="${unit.id}" ${isUnitAvailable(unit) ? "" : "disabled"}>
               ${escapeHtml(unit.callsign)} —
               ${escapeHtml(unit.officers || "Brak danych")}
-              (${escapeHtml(unit.status || "Status nieznany")})
+              (${isUnitAvailable(unit) ? "Dostępny" : "Zajęty — inna interwencja"})
             </option>
           `).join("")
         : '<option value="" disabled>Brak patroli w bazie</option>');
