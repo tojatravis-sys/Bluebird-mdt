@@ -425,6 +425,16 @@ const activeInterventionStatuses = [
   'Na miejscu'
 ];
 
+function isUnitAvailable(unit) {
+  const status = String(unit?.status || '')
+    .trim()
+    .toLocaleLowerCase('pl-PL')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  return ['dostepny', 'wolny', 'available'].includes(status);
+}
+
 // --------------------------------------------------
 // STATUS, SETUP, LOGOWANIE
 // --------------------------------------------------
@@ -1132,7 +1142,6 @@ async function addInterventionHistory(
 app.get(
   '/api/interventions',
   requireLogin,
-  requireDispatcher,
   asyncRoute(async (req, res) => {
     const result = await pool.query(`
       SELECT i.*,
@@ -1227,7 +1236,7 @@ app.post(
           });
         }
 
-        if (unit.status !== 'Dostępny') {
+        if (!isUnitAvailable(unit)) {
           await client.query('ROLLBACK');
           return res.status(409).json({
             error: 'Wybrany patrol nie jest dostępny.'
@@ -1393,7 +1402,7 @@ app.patch(
 
         if (
           targetUnitId !== current.unit_id &&
-          targetUnit.status !== 'Dostępny'
+          !isUnitAvailable(targetUnit)
         ) {
           await client.query('ROLLBACK');
           return res.status(409).json({
