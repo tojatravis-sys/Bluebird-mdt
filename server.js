@@ -74,8 +74,8 @@ app.use((req, res, next) => {
 
     writeAuditLog({
       actor,
-      action: ({ POST: 'Utworzenie / akcja', PATCH: 'Zmiana', PUT: 'Aktualizacja', DELETE: 'Usunięcie' })[req.method],
-      details: 'Operacja zakończona powodzeniem.',
+      action: ({ POST: 'Dodanie wpisu / akcja', PATCH: 'Edycja wpisu', PUT: 'Aktualizacja wpisu', DELETE: 'Usunięcie wpisu' })[req.method],
+      details: `Moduł: ${req.path.split('/')[2] || 'system'}.`,
       method: req.method,
       route: req.path,
       statusCode: res.statusCode
@@ -1206,19 +1206,7 @@ app.post(
       });
     }
 
-    if (roleGroup === 'DYŻURNY') {
-      const existingDutyAccount = await pool.query(`
-        SELECT id FROM users
-        WHERE role_group = 'DYŻURNY' AND active = 1
-        LIMIT 1
-      `);
 
-      if (existingDutyAccount.rowCount) {
-        return res.status(409).json({
-          error: 'Wspólne konto Dyżurki już istnieje. Zmień hasło lub użyj istniejącego konta zamiast tworzyć kolejne.'
-        });
-      }
-    }
 
     if (
       roleGroup === 'Funkcjonariusz' &&
@@ -1235,8 +1223,29 @@ app.post(
 
     const passwordHash = await bcrypt.hash(password, 12);
 
+    const client = await pool.connect();
+
     try {
-      const result = await pool.query(`
+      await client.query('BEGIN');
+
+      if (roleGroup === 'DYŻURNY') {
+        await client.query('SELECT pg_advisory_xact_lock(72819463)');
+
+        const existingDutyAccount = await client.query(`
+          SELECT id FROM users
+          WHERE role_group = 'DYŻURNY' AND active = 1
+          LIMIT 1
+        `);
+
+        if (existingDutyAccount.rowCount) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({
+            error: 'Wspólne konto Dyżurki już istnieje. Użyj istniejącego loginu zamiast tworzyć kolejne.'
+          });
+        }
+      }
+
+      const result = await client.query(`
         INSERT INTO users
           (username,password_hash,display_name,badge,rank,department,role_group,active)
         VALUES ($1,$2,$3,$4,$5,'KPP Lubin',$6,1)
@@ -1250,8 +1259,11 @@ app.post(
         roleGroup
       ]);
 
+      await client.query('COMMIT');
       res.status(201).json(result.rows[0]);
     } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+
       if (error.code === '23505') {
         return res.status(409).json({
           error: 'Ten login jest już zajęty.'
@@ -1259,6 +1271,8 @@ app.post(
       }
 
       throw error;
+    } finally {
+      client.release();
     }
   })
 );
