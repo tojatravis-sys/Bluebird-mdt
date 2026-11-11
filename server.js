@@ -832,6 +832,20 @@ app.post(
       });
     }
 
+    if (req.session.user.dutyFirstName && req.session.user.dutyLastName) {
+      const sameIdentity =
+        req.session.user.dutyFirstName === firstName &&
+        req.session.user.dutyLastName === lastName;
+
+      if (sameIdentity) {
+        return res.json({ success: true, user: currentUser(req) });
+      }
+
+      return res.status(409).json({
+        error: 'Dane tej sesji zostały już zapisane. Wyloguj się, aby rozpocząć nowy dyżur.'
+      });
+    }
+
     const fullName = `${firstName} ${lastName}`;
     const result = await pool.query(`
       UPDATE duty_operator_sessions
