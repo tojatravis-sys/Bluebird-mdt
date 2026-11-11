@@ -67,7 +67,7 @@ app.use((req, res, next) => {
     if (
       !req.path.startsWith('/api/') ||
       !['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method) ||
-      ['/api/login', '/api/logout', '/api/setup'].includes(req.path) ||
+      ['/api/login', '/api/logout', '/api/setup', '/api/duty/identity'].includes(req.path) ||
       res.statusCode < 200 ||
       res.statusCode >= 300
     ) return;
@@ -281,7 +281,10 @@ function currentUser(req) {
     rank: req.session.user.rank,
     department: req.session.user.department,
     roleGroup: req.session.user.roleGroup,
-    dutyOperator: Boolean(req.session.user.dutyOperator)
+    dutyOperator: Boolean(req.session.user.dutyOperator),
+    dutyIdentityComplete: !req.session.user.dutyOperator || Boolean(
+      req.session.user.dutyFirstName && req.session.user.dutyLastName
+    )
   };
 }
 
@@ -348,6 +351,19 @@ function requireLogin(req, res, next) {
         req.session.destroy(() => {});
         return res.status(401).json({
           error: 'Sesja Dyżurnego wygasła. Zaloguj się ponownie.'
+        });
+      }
+
+      const identityComplete = Boolean(
+        req.session.user.dutyFirstName && req.session.user.dutyLastName
+      );
+      const identityAllowed = req.path === '/api/duty/identity' ||
+        (req.path === '/api/logout' && req.method === 'POST');
+
+      if (!identityComplete && !identityAllowed) {
+        return res.status(403).json({
+          error: 'Najpierw uzupełnij imię i nazwisko Dyżurnego.',
+          requiresDutyIdentity: true
         });
       }
     }
@@ -576,10 +592,29 @@ app.get('/api/status', asyncRoute(async (req, res) => {
     'SELECT COUNT(*)::int AS count FROM users'
   );
 
+  let authenticated = Boolean(req.session.user);
+
+  if (authenticated && req.session.user.roleGroup === 'DYŻURNY') {
+    const touch = await pool.query(`
+      UPDATE duty_operator_sessions
+      SET last_seen_at = CURRENT_TIMESTAMP
+      WHERE session_id = $1
+        AND user_id = $2
+        AND ended_at IS NULL
+        AND last_seen_at > CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+      RETURNING session_id
+    `, [req.sessionID, req.session.user.id]);
+
+    if (!touch.rowCount) {
+      authenticated = false;
+      req.session.destroy(() => {});
+    }
+  }
+
   res.json({
     needsSetup: result.rows[0].count === 0,
-    authenticated: Boolean(req.session.user),
-    user: currentUser(req)
+    authenticated,
+    user: authenticated ? currentUser(req) : null
   });
 }));
 
@@ -691,22 +726,17 @@ app.post('/api/login', asyncRoute(async (req, res) => {
   }
 
   const isDutyDesk = user.role_group === 'DYŻURNY';
-  const firstName = cleanText(req.body.first_name, 80);
-  const lastName = cleanText(req.body.last_name, 80);
-
-  if (isDutyDesk && (!firstName || !lastName)) {
-    return res.status(400).json({
-      error: 'Dla logowania na Dyżurkę podaj imię i nazwisko.'
-    });
-  }
 
   await regenerateSession(req);
 
-  const dutyName = isDutyDesk ? `${firstName} ${lastName}` : '';
   req.session.user = {
     id: user.id,
     username: user.username,
-    displayName: isDutyDesk ? dutyName : (user.display_name || user.username),
+    displayName: isDutyDesk
+      ? 'Dane dyżurnego do uzupełnienia'
+      : (user.display_name || user.username),
+    dutyFirstName: '',
+    dutyLastName: '',
     badge: user.badge || '',
     rank: user.rank || 'Funkcjonariusz',
     department: user.department || 'KPP Lubin',
@@ -745,8 +775,8 @@ app.post('/api/login', asyncRoute(async (req, res) => {
       await client.query(`
         INSERT INTO duty_operator_sessions
           (session_id,user_id,first_name,last_name)
-        VALUES ($1,$2,$3,$4)
-      `, [req.sessionID, user.id, firstName, lastName]);
+        VALUES ($1,$2,'','')
+      `, [req.sessionID, user.id]);
 
       await client.query('COMMIT');
     } catch (error) {
@@ -763,11 +793,11 @@ app.post('/api/login', asyncRoute(async (req, res) => {
   await writeAuditLog({
     actor: {
       id: user.id,
-      name: isDutyDesk ? dutyName : (user.display_name || user.username),
+      name: isDutyDesk ? 'Dyżurny — dane do uzupełnienia' : (user.display_name || user.username),
       role: user.role_group || 'Funkcjonariusz'
     },
     action: 'Logowanie',
-    details: isDutyDesk ? 'Logowanie na wspólne konto Dyżurki.' : 'Logowanie do systemu.',
+    details: isDutyDesk ? 'Logowanie na wspólne konto Dyżurki; oczekiwanie na uzupełnienie danych.' : 'Logowanie do systemu.',
     method: 'POST',
     route: '/api/login',
     statusCode: 200
@@ -782,6 +812,66 @@ app.post('/api/login', asyncRoute(async (req, res) => {
 app.get('/api/me', (req, res) => {
   res.json(currentUser(req));
 });
+
+app.post(
+  '/api/duty/identity',
+  requireLogin,
+  asyncRoute(async (req, res) => {
+    if (req.session.user?.roleGroup !== 'DYŻURNY') {
+      return res.status(403).json({
+        error: 'Ten formularz jest przeznaczony wyłącznie dla Dyżurnego.'
+      });
+    }
+
+    const firstName = cleanText(req.body.first_name, 80);
+    const lastName = cleanText(req.body.last_name, 80);
+
+    if (!firstName || !lastName) {
+      return res.status(400).json({
+        error: 'Wpisz imię i nazwisko.'
+      });
+    }
+
+    const fullName = `${firstName} ${lastName}`;
+    const result = await pool.query(`
+      UPDATE duty_operator_sessions
+      SET first_name = $1, last_name = $2, last_seen_at = CURRENT_TIMESTAMP
+      WHERE session_id = $3
+        AND user_id = $4
+        AND ended_at IS NULL
+      RETURNING session_id
+    `, [firstName, lastName, req.sessionID, req.session.user.id]);
+
+    if (!result.rowCount) {
+      return res.status(401).json({
+        error: 'Sesja Dyżurnego wygasła. Zaloguj się ponownie.'
+      });
+    }
+
+    req.session.user.dutyFirstName = firstName;
+    req.session.user.dutyLastName = lastName;
+    req.session.user.displayName = fullName;
+    await saveSession(req);
+
+    await writeAuditLog({
+      actor: {
+        id: req.session.user.id,
+        name: fullName,
+        role: 'DYŻURNY'
+      },
+      action: 'Uzupełnienie danych Dyżurnego',
+      details: 'Dyżurny podał imię i nazwisko po zalogowaniu.',
+      method: 'POST',
+      route: '/api/duty/identity',
+      statusCode: 200
+    });
+
+    res.json({
+      success: true,
+      user: currentUser(req)
+    });
+  })
+);
 
 app.post('/api/logout', asyncRoute(async (req, res) => {
   const user = req.session.user;
