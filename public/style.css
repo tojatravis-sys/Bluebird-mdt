@@ -1773,3 +1773,16 @@ button:disabled {
     scroll-behavior: auto;
   }
 }
+
+/* Modal identyfikacji pozostaje dostępny także na niskich ekranach. */
+.duty-identity-backdrop {
+  overflow-y: auto;
+  backdrop-filter: blur(4px);
+}
+
+.duty-identity-card {
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  margin-top: auto;
+  margin-bottom: auto;
+}
