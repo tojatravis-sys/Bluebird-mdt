@@ -1306,6 +1306,14 @@ app.patch(
       [active ? 1 : 0, id]
     );
 
+    if (!active) {
+      await pool.query(`
+        UPDATE duty_operator_sessions
+        SET ended_at = CURRENT_TIMESTAMP
+        WHERE user_id = $1 AND ended_at IS NULL
+      `, [id]);
+    }
+
     if (!result.rowCount) {
       return res.status(404).json({
         error: 'Nie znaleziono konta.'
