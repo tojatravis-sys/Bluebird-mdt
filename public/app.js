@@ -1140,7 +1140,11 @@ async function renderAuditLogs() {
     activeList.innerHTML = operators.length
       ? operators.map(operator => `
           <div class="user-row">
-            <strong>${escapeHtml(operator.first_name)} ${escapeHtml(operator.last_name)}</strong>
+            <strong>${escapeHtml(
+              operator.first_name && operator.last_name
+                ? `${operator.first_name} ${operator.last_name}`
+                : "Oczekuje na uzupełnienie danych"
+            )}</strong>
             <p>Rozpoczęcie: ${escapeHtml(formatAuditDate(operator.started_at))}</p>
             <p>Ostatnia aktywność: ${escapeHtml(formatAuditDate(operator.last_seen_at))}</p>
           </div>
