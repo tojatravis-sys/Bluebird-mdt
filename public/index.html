@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#101b20">
   <meta name="description" content="Bluebird - system służbowy KPP Lubin">
   <title>BLUEBIRD | KPP Lubin</title>
-  <link rel="stylesheet" href="/style.css?v=20261111-3">
+  <link rel="stylesheet" href="/style.css?v=20261111-4">
 </head>
 
 <body>
@@ -87,6 +87,18 @@
             autocomplete="current-password"
             required
           >
+
+          <div class="form-hint">
+            Dla wspólnego konta Dyżurki podaj również swoje imię i nazwisko.
+          </div>
+
+          <label for="loginFirstName">IMIĘ (WYMAGANE DLA DYŻURNEGO)</label>
+          <input id="loginFirstName" name="first_name" type="text"
+            autocomplete="given-name" maxlength="80">
+
+          <label for="loginLastName">NAZWISKO (WYMAGANE DLA DYŻURNEGO)</label>
+          <input id="loginLastName" name="last_name" type="text"
+            autocomplete="family-name" maxlength="80">
 
           <button class="primary-button" type="submit">
             ZALOGUJ
@@ -231,6 +243,14 @@
             ZARZĄDZANIE DOSTĘPAMI
           </button>
 
+          <button
+            id="auditLogsMenuButton"
+            class="menu-button hidden"
+            data-page="auditLogs"
+          >
+            DZIENNIK SYSTEMOWY
+          </button>
+
         </div>
 
         <!-- OBSZAR ZAWARTOŚCI -->
@@ -266,7 +286,7 @@
   </footer>
 
   <!-- GŁÓWNY SKRYPT APLIKACJI -->
-  <script src="/app.js?v=20261111-3"></script>
+  <script src="/app.js?v=20261111-4"></script>
 
   <!-- Ekran startowy wyświetlany przez pełne 5 sekund. -->
   <script>
