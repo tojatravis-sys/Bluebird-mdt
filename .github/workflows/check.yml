@@ -1,0 +1,25 @@
+name: Bluebird checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobierz repozytorium
+        uses: actions/checkout@v4
+
+      - name: Przygotuj Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Sprawdź składnię JavaScript
+        run: npm run check
+
+      - name: Sprawdź package.json
+        run: node -e "JSON.parse(require('fs').readFileSync('package.json', 'utf8'))"
