@@ -1443,26 +1443,65 @@ app.patch(
       });
     }
 
-    const result = await pool.query(
-      'UPDATE users SET active = $1 WHERE id = $2',
-      [active ? 1 : 0, id]
-    );
+    const client = await pool.connect();
 
-    if (!active) {
-      await pool.query(`
-        UPDATE duty_operator_sessions
-        SET ended_at = CURRENT_TIMESTAMP
-        WHERE user_id = $1 AND ended_at IS NULL
-      `, [id]);
+    try {
+      await client.query('BEGIN');
+
+      const accountResult = await client.query(
+        'SELECT role_group FROM users WHERE id = $1 FOR UPDATE',
+        [id]
+      );
+
+      const account = accountResult.rows[0];
+
+      if (!account) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'Nie znaleziono konta.'
+        });
+      }
+
+      if (active && account.role_group === 'DYŻURNY') {
+        await client.query('SELECT pg_advisory_xact_lock(72819463)');
+
+        const anotherAccount = await client.query(`
+          SELECT id FROM users
+          WHERE role_group = 'DYŻURNY'
+            AND active = 1
+            AND id <> $1
+          LIMIT 1
+        `, [id]);
+
+        if (anotherAccount.rowCount) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({
+            error: 'Inne wspólne konto Dyżurki jest już aktywne. Dezaktywuj je przed ponownym włączeniem tego konta.'
+          });
+        }
+      }
+
+      await client.query(
+        'UPDATE users SET active = $1 WHERE id = $2',
+        [active ? 1 : 0, id]
+      );
+
+      if (!active) {
+        await client.query(`
+          UPDATE duty_operator_sessions
+          SET ended_at = CURRENT_TIMESTAMP
+          WHERE user_id = $1 AND ended_at IS NULL
+        `, [id]);
+      }
+
+      await client.query('COMMIT');
+      res.json({ success: true });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
     }
-
-    if (!result.rowCount) {
-      return res.status(404).json({
-        error: 'Nie znaleziono konta.'
-      });
-    }
-
-    res.json({ success: true });
   })
 );
 
