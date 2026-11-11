@@ -94,6 +94,7 @@ function showMessage(message, isError = false) {
   element.textContent = message;
   element.classList.remove("hidden");
   element.classList.toggle("error", isError);
+  element.classList.toggle("success", !isError);
 
   clearTimeout(showMessage.timer);
 
@@ -608,7 +609,9 @@ async function openPage(page) {
 
 document.querySelectorAll("[data-page]").forEach(button => {
   button.addEventListener("click", () => {
-    openPage(button.dataset.page);
+    openPage(button.dataset.page).catch(error => {
+      showMessage(error.message || "Nie udało się otworzyć modułu.", true);
+    });
   });
 });
 
