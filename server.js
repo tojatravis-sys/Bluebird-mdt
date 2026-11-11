@@ -57,6 +57,11 @@ app.use(session({
 
 // Rejestruj udane zmiany w API. Nie zapisujemy treści żądań ani haseł.
 app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+  }
+
   const actor = req.session?.user ? {
     id: req.session.user.id,
     name: req.session.user.displayName || req.session.user.username || 'System',
@@ -588,13 +593,30 @@ function isUnitAvailable(unit) {
 // --------------------------------------------------
 
 app.get('/api/status', asyncRoute(async (req, res) => {
-  const result = await pool.query(
-    'SELECT COUNT(*)::int AS count FROM users'
+  const [countResult, accountResult] = await Promise.all([
+    pool.query('SELECT COUNT(*)::int AS count FROM users'),
+    req.session.user
+      ? pool.query(
+          'SELECT active, role_group FROM users WHERE id = $1',
+          [req.session.user.id]
+        )
+      : Promise.resolve({ rows: [] })
+  ]);
+
+  let authenticated = Boolean(
+    req.session.user &&
+    accountResult.rows[0] &&
+    accountResult.rows[0].active
   );
 
-  let authenticated = Boolean(req.session.user);
+  if (!authenticated && req.session.user) {
+    req.session.destroy(() => {});
+  }
 
-  if (authenticated && req.session.user.roleGroup === 'DYŻURNY') {
+  if (
+    authenticated &&
+    accountResult.rows[0].role_group === 'DYŻURNY'
+  ) {
     const touch = await pool.query(`
       UPDATE duty_operator_sessions
       SET last_seen_at = CURRENT_TIMESTAMP
@@ -612,7 +634,7 @@ app.get('/api/status', asyncRoute(async (req, res) => {
   }
 
   res.json({
-    needsSetup: result.rows[0].count === 0,
+    needsSetup: countResult.rows[0].count === 0,
     authenticated,
     user: authenticated ? currentUser(req) : null
   });
