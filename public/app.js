@@ -174,7 +174,7 @@ function setNavigationVisibility() {
 
     button.classList.remove("hidden");
 
-    if (button.dataset.page === "users" && !isAdmin()) {
+    if (["users", "auditLogs"].includes(button.dataset.page) && !isAdmin()) {
       button.classList.add("hidden");
     }
   });
@@ -265,7 +265,9 @@ $("#loginForm")?.addEventListener("submit", async event => {
       method: "POST",
       body: JSON.stringify({
         username: form.elements.username.value.trim(),
-        password: form.elements.password.value
+        password: form.elements.password.value,
+        first_name: form.elements.first_name.value.trim(),
+        last_name: form.elements.last_name.value.trim()
       })
     });
 
@@ -441,7 +443,7 @@ async function openPage(page) {
     return;
   }
 
-  if (page === "users" && !isAdmin()) {
+  if (["users", "auditLogs"].includes(page) && !isAdmin()) {
     showMessage("Brak uprawnień.", true);
     return;
   }
@@ -452,7 +454,7 @@ async function openPage(page) {
     button.classList.remove("hidden");
     button.classList.toggle("active", button.dataset.page === page);
 
-    if (button.dataset.page === "users" && !isAdmin()) {
+    if (["users", "auditLogs"].includes(button.dataset.page) && !isAdmin()) {
       button.classList.add("hidden");
     }
   });
@@ -465,6 +467,8 @@ async function openPage(page) {
     renderCitizenSearch();
   } else if (page === "users") {
     await renderUsers();
+  } else if (page === "auditLogs") {
+    await renderAuditLogs();
   } else if (modules[page]) {
     await renderModule(page);
   }
@@ -955,6 +959,105 @@ async function renderUsers() {
         <p>${escapeHtml(error.message)}</p>
       </div>
     `;
+  }
+}
+
+// ==================================================
+// DZIENNIK SYSTEMOWY — KOMENDANTURA
+// ==================================================
+
+async function renderAuditLogs() {
+  if (!isAdmin()) {
+    contentArea.innerHTML = "<div class='panel'>Brak dostępu.</div>";
+    return;
+  }
+
+  state.currentPage = "auditLogs";
+  contentArea.innerHTML = `
+    <div class="section-title">KOMENDANTURA — DZIENNIK SYSTEMOWY</div>
+    <section class="panel">
+      <h2>AKTYWNI DYŻURNI</h2>
+      <div id="activeDutyOperators">Pobieranie...</div>
+    </section>
+    <section class="panel">
+      <div class="dispatch-toolbar">
+        <h2>HISTORIA ZDARZEŃ</h2>
+        <button type="button" class="small-button" id="auditRefresh">ODŚWIEŻ</button>
+      </div>
+      <form id="auditSearchForm" class="search-form">
+        <input id="auditSearch" type="search"
+          placeholder="Szukaj osoby, czynności lub modułu...">
+        <button type="submit" class="primary-button">SZUKAJ</button>
+      </form>
+      <div id="auditLogList">Pobieranie logów...</div>
+    </section>
+  `;
+
+  const activeList = $("#activeDutyOperators");
+  const logList = $("#auditLogList");
+  const searchInput = $("#auditSearch");
+
+  function formatAuditDate(value) {
+    if (!value) return "—";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("pl-PL");
+  }
+
+  async function loadActiveDuty() {
+    const operators = await api("/api/duty/active");
+    activeList.innerHTML = operators.length
+      ? operators.map(operator => `
+          <div class="user-row">
+            <strong>${escapeHtml(operator.first_name)} ${escapeHtml(operator.last_name)}</strong>
+            <p>Rozpoczęcie: ${escapeHtml(formatAuditDate(operator.started_at))}</p>
+            <p>Ostatnia aktywność: ${escapeHtml(formatAuditDate(operator.last_seen_at))}</p>
+          </div>
+        `).join("")
+      : "<p>Obecnie nikt nie jest zalogowany na Dyżurkę.</p>";
+  }
+
+  async function loadAuditLogs() {
+    logList.textContent = "Pobieranie logów...";
+    try {
+      const query = searchInput.value.trim();
+      const logs = await api("/api/audit-logs?q=" + encodeURIComponent(query));
+      logList.innerHTML = logs.length
+        ? logs.map(log => `
+            <article class="dispatch-intervention">
+              <div class="dispatch-toolbar">
+                <strong>${escapeHtml(log.action)}</strong>
+                <small>${escapeHtml(formatAuditDate(log.created_at))}</small>
+              </div>
+              <p><strong>Osoba:</strong> ${escapeHtml(log.actor_name || "System")}</p>
+              <p><strong>Rola:</strong> ${escapeHtml(log.actor_role || "—")}</p>
+              <p><strong>Szczegóły:</strong> ${escapeHtml(log.details || "—")}</p>
+              <small>${escapeHtml(log.method || "")} ${escapeHtml(log.route || "")} · HTTP ${escapeHtml(log.status_code ?? "—")}</small>
+            </article>
+          `).join("")
+        : "<p>Brak wpisów pasujących do wyszukiwania.</p>";
+    } catch (error) {
+      logList.textContent = error.message;
+    }
+  }
+
+  $("#auditSearchForm").addEventListener("submit", event => {
+    event.preventDefault();
+    loadAuditLogs();
+  });
+
+  $("#auditRefresh").addEventListener("click", async () => {
+    try {
+      await loadActiveDuty();
+    } catch (error) {
+      activeList.textContent = error.message;
+    }
+    await loadAuditLogs();
+  });
+
+  try {
+    await Promise.all([loadActiveDuty(), loadAuditLogs()]);
+  } catch (error) {
+    activeList.textContent = error.message;
   }
 }
 
