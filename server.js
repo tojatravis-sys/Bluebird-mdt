@@ -335,6 +335,14 @@ function requireLogin(req, res, next) {
     [req.session.user.id]
   ).then(async ({ rows }) => {
     if (!rows[0] || !rows[0].active) {
+      if (req.session.user?.roleGroup === 'DYŻURNY') {
+        await pool.query(`
+          UPDATE duty_operator_sessions
+          SET ended_at = CURRENT_TIMESTAMP
+          WHERE session_id = $1 AND ended_at IS NULL
+        `, [req.sessionID]);
+      }
+
       req.session.destroy(() => {});
       return res.status(401).json({
         error: 'Konto jest nieaktywne.'
@@ -610,6 +618,14 @@ app.get('/api/status', asyncRoute(async (req, res) => {
   );
 
   if (!authenticated && req.session.user) {
+    if (req.session.user.roleGroup === 'DYŻURNY') {
+      await pool.query(`
+        UPDATE duty_operator_sessions
+        SET ended_at = CURRENT_TIMESTAMP
+        WHERE session_id = $1 AND ended_at IS NULL
+      `, [req.sessionID]);
+    }
+
     req.session.destroy(() => {});
   }
 
