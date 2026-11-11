@@ -127,6 +127,7 @@ function updateUserPanel() {
   const name = $("#welcomeName");
   const details = $("#userDetails");
   const adminButton = $("#usersMenuButton");
+  const auditButton = $("#auditLogsMenuButton");
 
   if (name) {
     name.textContent =
@@ -145,9 +146,126 @@ function updateUserPanel() {
     ].filter(Boolean).join(" • ");
   }
 
-  if (adminButton) {
-    adminButton.classList.toggle("hidden", !isAdmin());
+  if (adminButton) adminButton.classList.toggle("hidden", !isAdmin());
+  if (auditButton) auditButton.classList.toggle("hidden", !isAdmin());
+}
+
+function hasDutyIdentity() {
+  return !isDispatcher() || state.user?.dutyIdentityComplete === true;
+}
+
+function removeDutyIdentityGate() {
+  document.getElementById("dutyIdentityGate")?.remove();
+}
+
+function renderDutyIdentityGate() {
+  if (!isDispatcher() || hasDutyIdentity()) {
+    removeDutyIdentityGate();
+    return;
   }
+
+  if (!document.getElementById("dutyIdentityGateStyles")) {
+    const styles = document.createElement("style");
+    styles.id = "dutyIdentityGateStyles";
+    styles.textContent = `
+      .duty-identity-backdrop {
+        position:fixed; inset:0; z-index:99999; display:flex;
+        align-items:center; justify-content:flex-end; padding:24px;
+        box-sizing:border-box; background:rgba(5,12,18,.82);
+      }
+      .duty-identity-card {
+        width:min(440px,100%); box-sizing:border-box; padding:24px;
+        border-left:8px solid #c62828; border-radius:12px;
+        background:#fff; color:#172b46; box-shadow:0 18px 60px rgba(0,0,0,.4);
+      }
+      .duty-identity-alert {
+        margin:-24px -24px 20px; padding:14px 20px;
+        background:#b71c1c; color:#fff; font-weight:800;
+        letter-spacing:.04em; border-radius:5px 5px 0 0;
+      }
+      .duty-identity-card h2 { margin:0 0 10px; color:#172b46; }
+      .duty-identity-card p { color:#536982; line-height:1.5; }
+      .duty-identity-card label { display:block; margin:14px 0 6px; font-weight:700; }
+      .duty-identity-card input {
+        width:100%; box-sizing:border-box; padding:12px;
+        border:1px solid #9aa9b8; border-radius:7px; font-size:16px;
+      }
+      .duty-identity-card button {
+        width:100%; margin-top:14px; padding:12px;
+        border:0; border-radius:7px; font-weight:800; cursor:pointer;
+      }
+      .duty-identity-save { background:#b71c1c; color:#fff; }
+      .duty-identity-logout { background:#edf1f5; color:#26394d; }
+      .duty-identity-error { color:#b71c1c !important; font-weight:700; min-height:1.2em; }
+      @media (max-width:640px) {
+        .duty-identity-backdrop { justify-content:center; padding:14px; }
+        .duty-identity-card { padding:20px; }
+        .duty-identity-alert { margin:-20px -20px 18px; }
+      }
+    `;
+    document.head.appendChild(styles);
+  }
+
+  let gate = document.getElementById("dutyIdentityGate");
+  if (!gate) {
+    gate = document.createElement("div");
+    gate.id = "dutyIdentityGate";
+    gate.className = "duty-identity-backdrop";
+    document.body.appendChild(gate);
+  }
+
+  gate.innerHTML = `
+    <section class="duty-identity-card" role="dialog"
+      aria-modal="true" aria-labelledby="dutyIdentityTitle">
+      <div class="duty-identity-alert" role="alert">WYMAGANE — UZUPEŁNIJ DANE</div>
+      <h2 id="dutyIdentityTitle">Identyfikacja dyżurnego</h2>
+      <p>Wpisz swoje imię i nazwisko. Do chwili zapisania danych
+        moduły, menu i przyciski Bluebird pozostają zablokowane.</p>
+      <form id="dutyIdentityForm">
+        <label for="dutyFirstName">IMIĘ</label>
+        <input id="dutyFirstName" name="first_name" maxlength="80"
+          autocomplete="given-name" required autofocus>
+        <label for="dutyLastName">NAZWISKO</label>
+        <input id="dutyLastName" name="last_name" maxlength="80"
+          autocomplete="family-name" required>
+        <p id="dutyIdentityError" class="duty-identity-error" aria-live="polite"></p>
+        <button class="duty-identity-save" type="submit">ZAPISZ DANE I PRZEJDŹ DO DYŻURKI</button>
+        <button class="duty-identity-logout" id="dutyIdentityLogout" type="button">WYLOGUJ SIĘ</button>
+      </form>
+    </section>
+  `;
+
+  $("#dutyIdentityForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const errorBox = $("#dutyIdentityError");
+    button.disabled = true;
+    errorBox.textContent = "";
+
+    try {
+      const result = await api("/api/duty/identity", {
+        method: "POST",
+        body: JSON.stringify({
+          first_name: form.elements.first_name.value.trim(),
+          last_name: form.elements.last_name.value.trim()
+        })
+      });
+
+      state.user = result.user;
+      updateUserPanel();
+      removeDutyIdentityGate();
+      showMessage("Zapisano dane dyżurnego. Dostęp do Dyżurki odblokowany.");
+      startBackgroundTasks();
+      await openPage("dispatch");
+    } catch (error) {
+      errorBox.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("#dutyIdentityLogout").addEventListener("click", logoutCurrentUser);
 }
 
 function stopBackgroundTasks() {
@@ -187,6 +305,7 @@ function setNavigationVisibility() {
 async function startApp() {
   hideScreens();
   stopBackgroundTasks();
+  removeDutyIdentityGate();
 
   try {
     const status = await api("/api/status");
@@ -199,20 +318,22 @@ async function startApp() {
 
     if (status.authenticated && status.user && status.user.id) {
       state.user = status.user;
-
       updateUserPanel();
       setNavigationVisibility();
       showScreen("dashboardScreen");
 
-      startBackgroundTasks();
+      if (isDispatcher() && !hasDutyIdentity()) {
+        renderDutyIdentityGate();
+        return;
+      }
 
+      startBackgroundTasks();
       if (isDispatcher()) {
         showMessage("Zalogowano na konto Dyżurnego.");
         await openPage("dispatch");
       } else {
         await openPage("summary");
       }
-
       return;
     }
 
@@ -265,9 +386,7 @@ $("#loginForm")?.addEventListener("submit", async event => {
       method: "POST",
       body: JSON.stringify({
         username: form.elements.username.value.trim(),
-        password: form.elements.password.value,
-        first_name: form.elements.first_name.value.trim(),
-        last_name: form.elements.last_name.value.trim()
+        password: form.elements.password.value
       })
     });
 
@@ -279,6 +398,12 @@ $("#loginForm")?.addEventListener("submit", async event => {
     setNavigationVisibility();
     showScreen("dashboardScreen");
 
+    if (isDispatcher() && !hasDutyIdentity()) {
+      renderDutyIdentityGate();
+      return;
+    }
+
+    removeDutyIdentityGate();
     // Powiadomienia uruchamiają się również po ręcznym logowaniu.
     startBackgroundTasks();
 
@@ -295,7 +420,7 @@ $("#loginForm")?.addEventListener("submit", async event => {
   }
 });
 
-$("#logoutButton")?.addEventListener("click", async () => {
+async function logoutCurrentUser() {
   stopBackgroundTasks();
 
   try {
@@ -304,12 +429,14 @@ $("#logoutButton")?.addEventListener("click", async () => {
     // Wylogowanie lokalne niezależnie od odpowiedzi serwera.
   }
 
+  removeDutyIdentityGate();
   state.user = null;
   state.records = {};
   state.users = [];
-
   showScreen("loginScreen");
-});
+}
+
+$("#logoutButton")?.addEventListener("click", logoutCurrentUser);
 
 // ==================================================
 // MODUŁY SYSTEMU
@@ -435,6 +562,11 @@ function readForm(form, config) {
 
 async function openPage(page) {
   if (!state.user) return;
+
+  if (isDispatcher() && !hasDutyIdentity()) {
+    renderDutyIdentityGate();
+    return;
+  }
 
   if (isDispatcher()) {
     await renderDispatchPage(
