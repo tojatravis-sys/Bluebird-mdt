@@ -891,6 +891,14 @@ for (const [moduleName, config] of Object.entries(modules)) {
         try {
           await client.query('BEGIN');
 
+          // Najpierw blokujemy istniejące interwencje, a potem patrol.
+          // Taki porządek odpowiada ścieżce PATCH (interwencja -> patrol)
+          // i ogranicza ryzyko zakleszczenia transakcji.
+          await client.query(
+            'SELECT id FROM interventions WHERE unit_id = $1 FOR UPDATE',
+            [id]
+          );
+
           const unitResult = await client.query(
             'SELECT id FROM units WHERE id = $1 FOR UPDATE',
             [id]
