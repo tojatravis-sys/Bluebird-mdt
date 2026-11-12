@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#101b20">
   <meta name="description" content="Bluebird - system służbowy KPP Lubin">
   <title>BLUEBIRD | KPP Lubin</title>
-  <link rel="stylesheet" href="/style.css?v=20261111-2">
+  <link rel="stylesheet" href="/style.css?v=20261111-5">
 </head>
 
 <body>
@@ -52,7 +52,7 @@
       </header>
 
       <!-- KOMUNIKATY -->
-      <div id="message" class="message hidden"></div>
+      <div id="message" class="message hidden" role="status" aria-live="polite"></div>
 
       <!-- LOGOWANIE -->
       <section id="loginScreen" class="screen-section hidden">
@@ -87,6 +87,10 @@
             autocomplete="current-password"
             required
           >
+
+          <p class="muted">
+            Dyżurny uzupełnia imię i nazwisko już po zalogowaniu.
+          </p>
 
           <button class="primary-button" type="submit">
             ZALOGUJ
@@ -231,6 +235,14 @@
             ZARZĄDZANIE DOSTĘPAMI
           </button>
 
+          <button
+            id="auditLogsMenuButton"
+            class="menu-button hidden"
+            data-page="auditLogs"
+          >
+            DZIENNIK SYSTEMOWY
+          </button>
+
         </div>
 
         <!-- OBSZAR ZAWARTOŚCI -->
@@ -266,9 +278,9 @@
   </footer>
 
   <!-- GŁÓWNY SKRYPT APLIKACJI -->
-  <script src="/app.js?v=20261111-2"></script>
+  <script src="/app.js?v=20261111-6"></script>
 
-  <!-- Krótki ekran startowy bez sztucznego, pięciosekundowego opóźnienia. -->
+  <!-- Ekran startowy wyświetlany przez pełne 5 sekund. -->
   <script>
     (() => {
       const bootScreen = document.getElementById("bootScreen");
@@ -281,7 +293,7 @@
       window.requestAnimationFrame(() => {
         window.setTimeout(() => {
           bootScreen?.classList.add("boot-hidden");
-        }, 80);
+        }, 5000);
       });
     })();
   </script>

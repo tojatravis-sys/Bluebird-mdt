@@ -55,6 +55,41 @@ app.use(session({
   }
 }));
 
+// Rejestruj udane zmiany w API. Nie zapisujemy treści żądań ani haseł.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+  }
+
+  const actor = req.session?.user ? {
+    id: req.session.user.id,
+    name: req.session.user.displayName || req.session.user.username || 'System',
+    role: req.session.user.roleGroup || ''
+  } : null;
+
+  res.on('finish', () => {
+    if (
+      !req.path.startsWith('/api/') ||
+      !['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method) ||
+      ['/api/login', '/api/logout', '/api/setup', '/api/duty/identity'].includes(req.path) ||
+      res.statusCode < 200 ||
+      res.statusCode >= 300
+    ) return;
+
+    writeAuditLog({
+      actor,
+      action: ({ POST: 'Dodanie wpisu / akcja', PATCH: 'Edycja wpisu', PUT: 'Aktualizacja wpisu', DELETE: 'Usunięcie wpisu' })[req.method],
+      details: `Moduł: ${req.path.split('/')[2] || 'system'}.`,
+      method: req.method,
+      route: req.path,
+      statusCode: res.statusCode
+    }).catch(error => console.error('Nie udało się zapisać logu:', error));
+  });
+
+  next();
+});
+
 // --------------------------------------------------
 // BAZA DANYCH I MIGRACJE
 // --------------------------------------------------
@@ -170,6 +205,39 @@ async function initializeDatabase() {
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id BIGSERIAL PRIMARY KEY,
+      actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_name TEXT NOT NULL DEFAULT 'System',
+      actor_role TEXT DEFAULT '',
+      action TEXT NOT NULL,
+      details TEXT DEFAULT '',
+      method TEXT DEFAULT '',
+      route TEXT DEFAULT '',
+      status_code INTEGER,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS audit_logs_created_idx
+      ON audit_logs (created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS audit_logs_actor_idx
+      ON audit_logs (actor_name, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS duty_operator_sessions (
+      session_id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      started_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      ended_at TIMESTAMPTZ
+    );
+
+    CREATE INDEX IF NOT EXISTS duty_operator_sessions_active_idx
+      ON duty_operator_sessions (last_seen_at)
+      WHERE ended_at IS NULL;
+
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS role_group TEXT DEFAULT 'Funkcjonariusz';
 
@@ -217,8 +285,36 @@ function currentUser(req) {
     badge: req.session.user.badge,
     rank: req.session.user.rank,
     department: req.session.user.department,
-    roleGroup: req.session.user.roleGroup
+    roleGroup: req.session.user.roleGroup,
+    dutyOperator: Boolean(req.session.user.dutyOperator),
+    dutyIdentityComplete: !req.session.user.dutyOperator || Boolean(
+      req.session.user.dutyFirstName && req.session.user.dutyLastName
+    )
   };
+}
+
+async function writeAuditLog({
+  actor = null,
+  action,
+  details = '',
+  method = '',
+  route = '',
+  statusCode = null
+}) {
+  await pool.query(`
+    INSERT INTO audit_logs
+      (actor_user_id,actor_name,actor_role,action,details,method,route,status_code)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+  `, [
+    actor?.id || null,
+    actor?.name || 'System',
+    actor?.role || '',
+    action,
+    details,
+    method,
+    route,
+    statusCode
+  ]);
 }
 
 function asyncRoute(handler) {
@@ -235,14 +331,54 @@ function requireLogin(req, res, next) {
   }
 
   pool.query(
-    'SELECT active FROM users WHERE id = $1',
+    'SELECT active, role_group FROM users WHERE id = $1',
     [req.session.user.id]
-  ).then(({ rows }) => {
+  ).then(async ({ rows }) => {
     if (!rows[0] || !rows[0].active) {
+      if (req.session.user?.roleGroup === 'DYŻURNY') {
+        await pool.query(`
+          UPDATE duty_operator_sessions
+          SET ended_at = CURRENT_TIMESTAMP
+          WHERE session_id = $1 AND ended_at IS NULL
+        `, [req.sessionID]);
+      }
+
       req.session.destroy(() => {});
       return res.status(401).json({
         error: 'Konto jest nieaktywne.'
       });
+    }
+
+    if (rows[0].role_group === 'DYŻURNY') {
+      const touch = await pool.query(`
+        UPDATE duty_operator_sessions
+        SET last_seen_at = CURRENT_TIMESTAMP
+        WHERE session_id = $1
+          AND user_id = $2
+          AND ended_at IS NULL
+          AND last_seen_at > CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+        RETURNING session_id
+      `, [req.sessionID, req.session.user.id]);
+
+      if (!touch.rowCount) {
+        req.session.destroy(() => {});
+        return res.status(401).json({
+          error: 'Sesja Dyżurnego wygasła. Zaloguj się ponownie.'
+        });
+      }
+
+      const identityComplete = Boolean(
+        req.session.user.dutyFirstName && req.session.user.dutyLastName
+      );
+      const identityAllowed = req.path === '/api/duty/identity' ||
+        (req.path === '/api/logout' && req.method === 'POST');
+
+      if (!identityComplete && !identityAllowed) {
+        return res.status(403).json({
+          error: 'Najpierw uzupełnij imię i nazwisko Dyżurnego.',
+          requiresDutyIdentity: true
+        });
+      }
     }
 
     next();
@@ -465,14 +601,58 @@ function isUnitAvailable(unit) {
 // --------------------------------------------------
 
 app.get('/api/status', asyncRoute(async (req, res) => {
-  const result = await pool.query(
-    'SELECT COUNT(*)::int AS count FROM users'
+  const [countResult, accountResult] = await Promise.all([
+    pool.query('SELECT COUNT(*)::int AS count FROM users'),
+    req.session.user
+      ? pool.query(
+          'SELECT active, role_group FROM users WHERE id = $1',
+          [req.session.user.id]
+        )
+      : Promise.resolve({ rows: [] })
+  ]);
+
+  let authenticated = Boolean(
+    req.session.user &&
+    accountResult.rows[0] &&
+    accountResult.rows[0].active
   );
 
+  if (!authenticated && req.session.user) {
+    if (req.session.user.roleGroup === 'DYŻURNY') {
+      await pool.query(`
+        UPDATE duty_operator_sessions
+        SET ended_at = CURRENT_TIMESTAMP
+        WHERE session_id = $1 AND ended_at IS NULL
+      `, [req.sessionID]);
+    }
+
+    req.session.destroy(() => {});
+  }
+
+  if (
+    authenticated &&
+    accountResult.rows[0].role_group === 'DYŻURNY'
+  ) {
+    const touch = await pool.query(`
+      UPDATE duty_operator_sessions
+      SET last_seen_at = CURRENT_TIMESTAMP
+      WHERE session_id = $1
+        AND user_id = $2
+        AND ended_at IS NULL
+        AND last_seen_at > CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+      RETURNING session_id
+    `, [req.sessionID, req.session.user.id]);
+
+    if (!touch.rowCount) {
+      authenticated = false;
+      req.session.destroy(() => {});
+    }
+  }
+
   res.json({
-    needsSetup: result.rows[0].count === 0,
-    authenticated: Boolean(req.session.user),
-    user: currentUser(req)
+    needsSetup: countResult.rows[0].count === 0,
+    authenticated,
+    user: authenticated ? currentUser(req) : null
   });
 }));
 
@@ -583,19 +763,83 @@ app.post('/api/login', asyncRoute(async (req, res) => {
     });
   }
 
+  const isDutyDesk = user.role_group === 'DYŻURNY';
+
   await regenerateSession(req);
 
   req.session.user = {
     id: user.id,
     username: user.username,
-    displayName: user.display_name || user.username,
+    displayName: isDutyDesk
+      ? 'Dane dyżurnego do uzupełnienia'
+      : (user.display_name || user.username),
+    dutyFirstName: '',
+    dutyLastName: '',
     badge: user.badge || '',
     rank: user.rank || 'Funkcjonariusz',
     department: user.department || 'KPP Lubin',
-    roleGroup: user.role_group || 'Funkcjonariusz'
+    roleGroup: user.role_group || 'Funkcjonariusz',
+    dutyOperator: isDutyDesk
   };
 
+  if (isDutyDesk) {
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(72819462)');
+      await client.query(`
+        UPDATE duty_operator_sessions
+        SET ended_at = CURRENT_TIMESTAMP
+        WHERE ended_at IS NULL
+          AND last_seen_at <= CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+      `);
+
+      const active = await client.query(`
+        SELECT COUNT(*)::int AS count
+        FROM duty_operator_sessions
+        WHERE ended_at IS NULL
+          AND last_seen_at > CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+      `);
+
+      if (active.rows[0].count >= 2) {
+        await client.query('ROLLBACK');
+        req.session.destroy(() => {});
+        return res.status(409).json({
+          error: 'Na Dyżurce są już zalogowane dwie osoby. Poczekaj, aż ktoś zakończy dyżur.'
+        });
+      }
+
+      await client.query(`
+        INSERT INTO duty_operator_sessions
+          (session_id,user_id,first_name,last_name)
+        VALUES ($1,$2,'','')
+      `, [req.sessionID, user.id]);
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      req.session.destroy(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   await saveSession(req);
+
+  await writeAuditLog({
+    actor: {
+      id: user.id,
+      name: isDutyDesk ? 'Dyżurny — dane do uzupełnienia' : (user.display_name || user.username),
+      role: user.role_group || 'Funkcjonariusz'
+    },
+    action: 'Logowanie',
+    details: isDutyDesk ? 'Logowanie na wspólne konto Dyżurki; oczekiwanie na uzupełnienie danych.' : 'Logowanie do systemu.',
+    method: 'POST',
+    route: '/api/login',
+    statusCode: 200
+  });
 
   res.json({
     success: true,
@@ -607,7 +851,106 @@ app.get('/api/me', (req, res) => {
   res.json(currentUser(req));
 });
 
-app.post('/api/logout', (req, res) => {
+app.post(
+  '/api/duty/identity',
+  requireLogin,
+  asyncRoute(async (req, res) => {
+    if (req.session.user?.roleGroup !== 'DYŻURNY') {
+      return res.status(403).json({
+        error: 'Ten formularz jest przeznaczony wyłącznie dla Dyżurnego.'
+      });
+    }
+
+    const firstName = cleanText(req.body.first_name, 80);
+    const lastName = cleanText(req.body.last_name, 80);
+
+    if (!firstName || !lastName) {
+      return res.status(400).json({
+        error: 'Wpisz imię i nazwisko.'
+      });
+    }
+
+    if (req.session.user.dutyFirstName && req.session.user.dutyLastName) {
+      const sameIdentity =
+        req.session.user.dutyFirstName === firstName &&
+        req.session.user.dutyLastName === lastName;
+
+      if (sameIdentity) {
+        return res.json({ success: true, user: currentUser(req) });
+      }
+
+      return res.status(409).json({
+        error: 'Dane tej sesji zostały już zapisane. Wyloguj się, aby rozpocząć nowy dyżur.'
+      });
+    }
+
+    const fullName = `${firstName} ${lastName}`;
+    const result = await pool.query(`
+      UPDATE duty_operator_sessions
+      SET first_name = $1, last_name = $2, last_seen_at = CURRENT_TIMESTAMP
+      WHERE session_id = $3
+        AND user_id = $4
+        AND ended_at IS NULL
+      RETURNING session_id
+    `, [firstName, lastName, req.sessionID, req.session.user.id]);
+
+    if (!result.rowCount) {
+      return res.status(401).json({
+        error: 'Sesja Dyżurnego wygasła. Zaloguj się ponownie.'
+      });
+    }
+
+    req.session.user.dutyFirstName = firstName;
+    req.session.user.dutyLastName = lastName;
+    req.session.user.displayName = fullName;
+    await saveSession(req);
+
+    await writeAuditLog({
+      actor: {
+        id: req.session.user.id,
+        name: fullName,
+        role: 'DYŻURNY'
+      },
+      action: 'Uzupełnienie danych Dyżurnego',
+      details: 'Dyżurny podał imię i nazwisko po zalogowaniu.',
+      method: 'POST',
+      route: '/api/duty/identity',
+      statusCode: 200
+    });
+
+    res.json({
+      success: true,
+      user: currentUser(req)
+    });
+  })
+);
+
+app.post('/api/logout', asyncRoute(async (req, res) => {
+  const user = req.session.user;
+
+  if (user?.roleGroup === 'DYŻURNY') {
+    await pool.query(`
+      UPDATE duty_operator_sessions
+      SET ended_at = CURRENT_TIMESTAMP
+      WHERE session_id = $1 AND ended_at IS NULL
+    `, [req.sessionID]);
+  }
+
+  if (user) {
+    await writeAuditLog({
+      actor: {
+        id: user.id,
+        name: user.displayName || user.username,
+        role: user.roleGroup || ''
+      },
+      action: 'Wylogowanie',
+      details: 'Użytkownik zakończył sesję.',
+      method: 'POST',
+      route: '/api/logout',
+      statusCode: 200
+    });
+  }
+
   req.session.destroy(error => {
     if (error) {
       return res.status(500).json({
@@ -618,7 +961,7 @@ app.post('/api/logout', (req, res) => {
     res.clearCookie('bluebird.sid');
     res.json({ success: true });
   });
-});
+}));
 
 // --------------------------------------------------
 // PULPIT
@@ -1005,6 +1348,8 @@ app.post(
       });
     }
 
+
+
     if (
       roleGroup === 'Funkcjonariusz' &&
       !allowedRanks.includes(rank)
@@ -1020,8 +1365,29 @@ app.post(
 
     const passwordHash = await bcrypt.hash(password, 12);
 
+    const client = await pool.connect();
+
     try {
-      const result = await pool.query(`
+      await client.query('BEGIN');
+
+      if (roleGroup === 'DYŻURNY') {
+        await client.query('SELECT pg_advisory_xact_lock(72819463)');
+
+        const existingDutyAccount = await client.query(`
+          SELECT id FROM users
+          WHERE role_group = 'DYŻURNY' AND active = 1
+          LIMIT 1
+        `);
+
+        if (existingDutyAccount.rowCount) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({
+            error: 'Wspólne konto Dyżurki już istnieje. Użyj istniejącego loginu zamiast tworzyć kolejne.'
+          });
+        }
+      }
+
+      const result = await client.query(`
         INSERT INTO users
           (username,password_hash,display_name,badge,rank,department,role_group,active)
         VALUES ($1,$2,$3,$4,$5,'KPP Lubin',$6,1)
@@ -1035,8 +1401,11 @@ app.post(
         roleGroup
       ]);
 
+      await client.query('COMMIT');
       res.status(201).json(result.rows[0]);
     } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+
       if (error.code === '23505') {
         return res.status(409).json({
           error: 'Ten login jest już zajęty.'
@@ -1044,6 +1413,8 @@ app.post(
       }
 
       throw error;
+    } finally {
+      client.release();
     }
   })
 );
@@ -1072,18 +1443,65 @@ app.patch(
       });
     }
 
-    const result = await pool.query(
-      'UPDATE users SET active = $1 WHERE id = $2',
-      [active ? 1 : 0, id]
-    );
+    const client = await pool.connect();
 
-    if (!result.rowCount) {
-      return res.status(404).json({
-        error: 'Nie znaleziono konta.'
-      });
+    try {
+      await client.query('BEGIN');
+
+      const accountResult = await client.query(
+        'SELECT role_group FROM users WHERE id = $1 FOR UPDATE',
+        [id]
+      );
+
+      const account = accountResult.rows[0];
+
+      if (!account) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({
+          error: 'Nie znaleziono konta.'
+        });
+      }
+
+      if (active && account.role_group === 'DYŻURNY') {
+        await client.query('SELECT pg_advisory_xact_lock(72819463)');
+
+        const anotherAccount = await client.query(`
+          SELECT id FROM users
+          WHERE role_group = 'DYŻURNY'
+            AND active = 1
+            AND id <> $1
+          LIMIT 1
+        `, [id]);
+
+        if (anotherAccount.rowCount) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({
+            error: 'Inne wspólne konto Dyżurki jest już aktywne. Dezaktywuj je przed ponownym włączeniem tego konta.'
+          });
+        }
+      }
+
+      await client.query(
+        'UPDATE users SET active = $1 WHERE id = $2',
+        [active ? 1 : 0, id]
+      );
+
+      if (!active) {
+        await client.query(`
+          UPDATE duty_operator_sessions
+          SET ended_at = CURRENT_TIMESTAMP
+          WHERE user_id = $1 AND ended_at IS NULL
+        `, [id]);
+      }
+
+      await client.query('COMMIT');
+      res.json({ success: true });
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
     }
-
-    res.json({ success: true });
   })
 );
 
@@ -1131,6 +1549,57 @@ app.delete(
     );
 
     res.json({ success: true });
+  })
+);
+
+// --------------------------------------------------
+// DZIENNIK SYSTEMOWY — KOMENDANTURA
+// --------------------------------------------------
+
+app.get(
+  '/api/audit-logs',
+  requireLogin,
+  requireAdmin,
+  asyncRoute(async (req, res) => {
+    const search = cleanText(req.query.q, 120);
+    const result = await pool.query(`
+      SELECT id,actor_name,actor_role,action,details,method,route,
+             status_code,created_at
+      FROM audit_logs
+      WHERE $1 = ''
+         OR actor_name ILIKE $2
+         OR action ILIKE $2
+         OR details ILIKE $2
+         OR route ILIKE $2
+      ORDER BY created_at DESC, id DESC
+      LIMIT 500
+    `, [search, `%${search}%`]);
+
+    res.json(result.rows);
+  })
+);
+
+app.get(
+  '/api/duty/active',
+  requireLogin,
+  requireAdmin,
+  asyncRoute(async (req, res) => {
+    await pool.query(`
+      UPDATE duty_operator_sessions
+      SET ended_at = CURRENT_TIMESTAMP
+      WHERE ended_at IS NULL
+        AND last_seen_at <= CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+    `);
+
+    const result = await pool.query(`
+      SELECT first_name,last_name,started_at,last_seen_at
+      FROM duty_operator_sessions
+      WHERE ended_at IS NULL
+        AND last_seen_at > CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+      ORDER BY started_at ASC
+    `);
+
+    res.json(result.rows);
   })
 );
 

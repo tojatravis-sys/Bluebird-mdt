@@ -94,6 +94,7 @@ function showMessage(message, isError = false) {
   element.textContent = message;
   element.classList.remove("hidden");
   element.classList.toggle("error", isError);
+  element.classList.toggle("success", !isError);
 
   clearTimeout(showMessage.timer);
 
@@ -127,6 +128,7 @@ function updateUserPanel() {
   const name = $("#welcomeName");
   const details = $("#userDetails");
   const adminButton = $("#usersMenuButton");
+  const auditButton = $("#auditLogsMenuButton");
 
   if (name) {
     name.textContent =
@@ -145,9 +147,126 @@ function updateUserPanel() {
     ].filter(Boolean).join(" • ");
   }
 
-  if (adminButton) {
-    adminButton.classList.toggle("hidden", !isAdmin());
+  if (adminButton) adminButton.classList.toggle("hidden", !isAdmin());
+  if (auditButton) auditButton.classList.toggle("hidden", !isAdmin());
+}
+
+function hasDutyIdentity() {
+  return !isDispatcher() || state.user?.dutyIdentityComplete === true;
+}
+
+function removeDutyIdentityGate() {
+  document.getElementById("dutyIdentityGate")?.remove();
+}
+
+function renderDutyIdentityGate() {
+  if (!isDispatcher() || hasDutyIdentity()) {
+    removeDutyIdentityGate();
+    return;
   }
+
+  if (!document.getElementById("dutyIdentityGateStyles")) {
+    const styles = document.createElement("style");
+    styles.id = "dutyIdentityGateStyles";
+    styles.textContent = `
+      .duty-identity-backdrop {
+        position:fixed; inset:0; z-index:99999; display:flex;
+        align-items:center; justify-content:flex-end; padding:24px;
+        box-sizing:border-box; background:rgba(5,12,18,.82);
+      }
+      .duty-identity-card {
+        width:min(440px,100%); box-sizing:border-box; padding:24px;
+        border-left:8px solid #c62828; border-radius:12px;
+        background:#fff; color:#172b46; box-shadow:0 18px 60px rgba(0,0,0,.4);
+      }
+      .duty-identity-alert {
+        margin:-24px -24px 20px; padding:14px 20px;
+        background:#b71c1c; color:#fff; font-weight:800;
+        letter-spacing:.04em; border-radius:5px 5px 0 0;
+      }
+      .duty-identity-card h2 { margin:0 0 10px; color:#172b46; }
+      .duty-identity-card p { color:#536982; line-height:1.5; }
+      .duty-identity-card label { display:block; margin:14px 0 6px; font-weight:700; }
+      .duty-identity-card input {
+        width:100%; box-sizing:border-box; padding:12px;
+        border:1px solid #9aa9b8; border-radius:7px; font-size:16px;
+      }
+      .duty-identity-card button {
+        width:100%; margin-top:14px; padding:12px;
+        border:0; border-radius:7px; font-weight:800; cursor:pointer;
+      }
+      .duty-identity-save { background:#b71c1c; color:#fff; }
+      .duty-identity-logout { background:#edf1f5; color:#26394d; }
+      .duty-identity-error { color:#b71c1c !important; font-weight:700; min-height:1.2em; }
+      @media (max-width:640px) {
+        .duty-identity-backdrop { justify-content:center; padding:14px; }
+        .duty-identity-card { padding:20px; }
+        .duty-identity-alert { margin:-20px -20px 18px; }
+      }
+    `;
+    document.head.appendChild(styles);
+  }
+
+  let gate = document.getElementById("dutyIdentityGate");
+  if (!gate) {
+    gate = document.createElement("div");
+    gate.id = "dutyIdentityGate";
+    gate.className = "duty-identity-backdrop";
+    document.body.appendChild(gate);
+  }
+
+  gate.innerHTML = `
+    <section class="duty-identity-card" role="dialog"
+      aria-modal="true" aria-labelledby="dutyIdentityTitle">
+      <div class="duty-identity-alert" role="alert">WYMAGANE — UZUPEŁNIJ DANE</div>
+      <h2 id="dutyIdentityTitle">Identyfikacja dyżurnego</h2>
+      <p>Wpisz swoje imię i nazwisko. Do chwili zapisania danych
+        moduły, menu i przyciski Bluebird pozostają zablokowane.</p>
+      <form id="dutyIdentityForm">
+        <label for="dutyFirstName">IMIĘ</label>
+        <input id="dutyFirstName" name="first_name" maxlength="80"
+          autocomplete="given-name" required autofocus>
+        <label for="dutyLastName">NAZWISKO</label>
+        <input id="dutyLastName" name="last_name" maxlength="80"
+          autocomplete="family-name" required>
+        <p id="dutyIdentityError" class="duty-identity-error" aria-live="polite"></p>
+        <button class="duty-identity-save" type="submit">ZAPISZ DANE I PRZEJDŹ DO DYŻURKI</button>
+        <button class="duty-identity-logout" id="dutyIdentityLogout" type="button">WYLOGUJ SIĘ</button>
+      </form>
+    </section>
+  `;
+
+  $("#dutyIdentityForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const errorBox = $("#dutyIdentityError");
+    button.disabled = true;
+    errorBox.textContent = "";
+
+    try {
+      const result = await api("/api/duty/identity", {
+        method: "POST",
+        body: JSON.stringify({
+          first_name: form.elements.first_name.value.trim(),
+          last_name: form.elements.last_name.value.trim()
+        })
+      });
+
+      state.user = result.user;
+      updateUserPanel();
+      removeDutyIdentityGate();
+      showMessage("Zapisano dane dyżurnego. Dostęp do Dyżurki odblokowany.");
+      startBackgroundTasks();
+      await openPage("dispatch");
+    } catch (error) {
+      errorBox.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  $("#dutyIdentityLogout").addEventListener("click", logoutCurrentUser);
 }
 
 function stopBackgroundTasks() {
@@ -174,7 +293,7 @@ function setNavigationVisibility() {
 
     button.classList.remove("hidden");
 
-    if (button.dataset.page === "users" && !isAdmin()) {
+    if (["users", "auditLogs"].includes(button.dataset.page) && !isAdmin()) {
       button.classList.add("hidden");
     }
   });
@@ -187,6 +306,7 @@ function setNavigationVisibility() {
 async function startApp() {
   hideScreens();
   stopBackgroundTasks();
+  removeDutyIdentityGate();
 
   try {
     const status = await api("/api/status");
@@ -199,20 +319,22 @@ async function startApp() {
 
     if (status.authenticated && status.user && status.user.id) {
       state.user = status.user;
-
       updateUserPanel();
       setNavigationVisibility();
       showScreen("dashboardScreen");
 
-      startBackgroundTasks();
+      if (isDispatcher() && !hasDutyIdentity()) {
+        renderDutyIdentityGate();
+        return;
+      }
 
+      startBackgroundTasks();
       if (isDispatcher()) {
         showMessage("Zalogowano na konto Dyżurnego.");
         await openPage("dispatch");
       } else {
         await openPage("summary");
       }
-
       return;
     }
 
@@ -277,6 +399,12 @@ $("#loginForm")?.addEventListener("submit", async event => {
     setNavigationVisibility();
     showScreen("dashboardScreen");
 
+    if (isDispatcher() && !hasDutyIdentity()) {
+      renderDutyIdentityGate();
+      return;
+    }
+
+    removeDutyIdentityGate();
     // Powiadomienia uruchamiają się również po ręcznym logowaniu.
     startBackgroundTasks();
 
@@ -293,7 +421,7 @@ $("#loginForm")?.addEventListener("submit", async event => {
   }
 });
 
-$("#logoutButton")?.addEventListener("click", async () => {
+async function logoutCurrentUser() {
   stopBackgroundTasks();
 
   try {
@@ -302,12 +430,14 @@ $("#logoutButton")?.addEventListener("click", async () => {
     // Wylogowanie lokalne niezależnie od odpowiedzi serwera.
   }
 
+  removeDutyIdentityGate();
   state.user = null;
   state.records = {};
   state.users = [];
-
   showScreen("loginScreen");
-});
+}
+
+$("#logoutButton")?.addEventListener("click", logoutCurrentUser);
 
 // ==================================================
 // MODUŁY SYSTEMU
@@ -434,6 +564,11 @@ function readForm(form, config) {
 async function openPage(page) {
   if (!state.user) return;
 
+  if (isDispatcher() && !hasDutyIdentity()) {
+    renderDutyIdentityGate();
+    return;
+  }
+
   if (isDispatcher()) {
     await renderDispatchPage(
       page === "dispatch" ? state.dispatchPage : "interventions"
@@ -441,7 +576,7 @@ async function openPage(page) {
     return;
   }
 
-  if (page === "users" && !isAdmin()) {
+  if (["users", "auditLogs"].includes(page) && !isAdmin()) {
     showMessage("Brak uprawnień.", true);
     return;
   }
@@ -452,7 +587,7 @@ async function openPage(page) {
     button.classList.remove("hidden");
     button.classList.toggle("active", button.dataset.page === page);
 
-    if (button.dataset.page === "users" && !isAdmin()) {
+    if (["users", "auditLogs"].includes(button.dataset.page) && !isAdmin()) {
       button.classList.add("hidden");
     }
   });
@@ -465,6 +600,8 @@ async function openPage(page) {
     renderCitizenSearch();
   } else if (page === "users") {
     await renderUsers();
+  } else if (page === "auditLogs") {
+    await renderAuditLogs();
   } else if (modules[page]) {
     await renderModule(page);
   }
@@ -472,7 +609,9 @@ async function openPage(page) {
 
 document.querySelectorAll("[data-page]").forEach(button => {
   button.addEventListener("click", () => {
-    openPage(button.dataset.page);
+    openPage(button.dataset.page).catch(error => {
+      showMessage(error.message || "Nie udało się otworzyć modułu.", true);
+    });
   });
 });
 
@@ -955,6 +1094,109 @@ async function renderUsers() {
         <p>${escapeHtml(error.message)}</p>
       </div>
     `;
+  }
+}
+
+// ==================================================
+// DZIENNIK SYSTEMOWY — KOMENDANTURA
+// ==================================================
+
+async function renderAuditLogs() {
+  if (!isAdmin()) {
+    contentArea.innerHTML = "<div class='panel'>Brak dostępu.</div>";
+    return;
+  }
+
+  state.currentPage = "auditLogs";
+  contentArea.innerHTML = `
+    <div class="section-title">KOMENDANTURA — DZIENNIK SYSTEMOWY</div>
+    <section class="panel">
+      <h2>AKTYWNI DYŻURNI</h2>
+      <div id="activeDutyOperators">Pobieranie...</div>
+    </section>
+    <section class="panel">
+      <div class="dispatch-toolbar">
+        <h2>HISTORIA ZDARZEŃ</h2>
+        <button type="button" class="small-button" id="auditRefresh">ODŚWIEŻ</button>
+      </div>
+      <form id="auditSearchForm" class="search-form">
+        <input id="auditSearch" type="search"
+          placeholder="Szukaj osoby, czynności lub modułu...">
+        <button type="submit" class="primary-button">SZUKAJ</button>
+      </form>
+      <div id="auditLogList">Pobieranie logów...</div>
+    </section>
+  `;
+
+  const activeList = $("#activeDutyOperators");
+  const logList = $("#auditLogList");
+  const searchInput = $("#auditSearch");
+
+  function formatAuditDate(value) {
+    if (!value) return "—";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("pl-PL");
+  }
+
+  async function loadActiveDuty() {
+    const operators = await api("/api/duty/active");
+    activeList.innerHTML = operators.length
+      ? operators.map(operator => `
+          <div class="user-row">
+            <strong>${escapeHtml(
+              operator.first_name && operator.last_name
+                ? `${operator.first_name} ${operator.last_name}`
+                : "Oczekuje na uzupełnienie danych"
+            )}</strong>
+            <p>Rozpoczęcie: ${escapeHtml(formatAuditDate(operator.started_at))}</p>
+            <p>Ostatnia aktywność: ${escapeHtml(formatAuditDate(operator.last_seen_at))}</p>
+          </div>
+        `).join("")
+      : "<p>Obecnie nikt nie jest zalogowany na Dyżurkę.</p>";
+  }
+
+  async function loadAuditLogs() {
+    logList.textContent = "Pobieranie logów...";
+    try {
+      const query = searchInput.value.trim();
+      const logs = await api("/api/audit-logs?q=" + encodeURIComponent(query));
+      logList.innerHTML = logs.length
+        ? logs.map(log => `
+            <article class="dispatch-intervention">
+              <div class="dispatch-toolbar">
+                <strong>${escapeHtml(log.action)}</strong>
+                <small>${escapeHtml(formatAuditDate(log.created_at))}</small>
+              </div>
+              <p><strong>Osoba:</strong> ${escapeHtml(log.actor_name || "System")}</p>
+              <p><strong>Rola:</strong> ${escapeHtml(log.actor_role || "—")}</p>
+              <p><strong>Szczegóły:</strong> ${escapeHtml(log.details || "—")}</p>
+              <small>${escapeHtml(log.method || "")} ${escapeHtml(log.route || "")} · HTTP ${escapeHtml(log.status_code ?? "—")}</small>
+            </article>
+          `).join("")
+        : "<p>Brak wpisów pasujących do wyszukiwania.</p>";
+    } catch (error) {
+      logList.textContent = error.message;
+    }
+  }
+
+  $("#auditSearchForm").addEventListener("submit", event => {
+    event.preventDefault();
+    loadAuditLogs();
+  });
+
+  $("#auditRefresh").addEventListener("click", async () => {
+    try {
+      await loadActiveDuty();
+    } catch (error) {
+      activeList.textContent = error.message;
+    }
+    await loadAuditLogs();
+  });
+
+  try {
+    await Promise.all([loadActiveDuty(), loadAuditLogs()]);
+  } catch (error) {
+    activeList.textContent = error.message;
   }
 }
 
