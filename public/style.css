@@ -888,7 +888,9 @@ form button:not(.primary-button) {
   .screen .dispatch-intervention {
     padding: 18px;
     margin: 0 0 14px;
-    background: #1b2b3d;
+    background: #ffffff;
+    color: #172b46;
+    border: 1px solid #dce4ef;
   }
 
   .screen .dispatch-intervention p {
@@ -943,3 +945,49 @@ summary:focus-visible {
     transition-duration: .01ms !important;
   }
 }
+
+/* TABLETY: szerszy układ bez przechodzenia w tryb desktopowy. */
+@media (min-width: 421px) and (max-width: 899px) {
+  body {
+    padding: 12px;
+  }
+
+  .device {
+    width: min(100%, 760px);
+    min-height: calc(100vh - 24px);
+    min-height: calc(100dvh - 24px);
+    border-radius: 28px;
+  }
+
+  .screen {
+    min-height: 0;
+  }
+
+  .screen-section {
+    padding: 22px;
+  }
+
+  .menu-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dispatch-wrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 640px) and (max-width: 899px) {
+  .menu-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
