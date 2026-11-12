@@ -32,10 +32,24 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
+pool.on('error', error => {
+  console.error('Błąd bezczynnego połączenia PostgreSQL:', error);
+});
+
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '1mb' }));
+
+// Dane sesji i odpowiedzi API nie powinny trafiać do współdzielonych cache.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+  }
+
+  next();
+});
 
 app.use(session({
   name: 'bluebird.sid',
@@ -235,15 +249,23 @@ function requireLogin(req, res, next) {
   }
 
   pool.query(
-    'SELECT active FROM users WHERE id = $1',
+    'SELECT active, role_group FROM users WHERE id = $1',
     [req.session.user.id]
   ).then(({ rows }) => {
-    if (!rows[0] || !rows[0].active) {
+    const account = rows[0];
+
+    if (!account || !account.active) {
       req.session.destroy(() => {});
+      res.clearCookie('bluebird.sid');
       return res.status(401).json({
         error: 'Konto jest nieaktywne.'
       });
     }
+
+    // Odśwież rolę z bazy, aby zmiana uprawnień działała także
+    // dla już otwartych sesji.
+    req.session.user.roleGroup =
+      account.role_group || 'Funkcjonariusz';
 
     next();
   }).catch(next);
@@ -469,10 +491,30 @@ app.get('/api/status', asyncRoute(async (req, res) => {
     'SELECT COUNT(*)::int AS count FROM users'
   );
 
+  let authenticated = false;
+
+  if (req.session.user?.id) {
+    const accountResult = await pool.query(
+      'SELECT active, role_group FROM users WHERE id = $1',
+      [req.session.user.id]
+    );
+
+    const account = accountResult.rows[0];
+    authenticated = Boolean(account && account.active);
+
+    if (authenticated) {
+      req.session.user.roleGroup =
+        account.role_group || 'Funkcjonariusz';
+    } else {
+      req.session.destroy(() => {});
+      res.clearCookie('bluebird.sid');
+    }
+  }
+
   res.json({
     needsSetup: result.rows[0].count === 0,
-    authenticated: Boolean(req.session.user),
-    user: currentUser(req)
+    authenticated,
+    user: authenticated ? currentUser(req) : null
   });
 }));
 
@@ -842,18 +884,52 @@ for (const [moduleName, config] of Object.entries(modules)) {
       }
 
       if (moduleName === 'units') {
-        const activeIntervention = await pool.query(`
-          SELECT id, incident_number
-          FROM interventions
-          WHERE unit_id = $1
-            AND status = ANY($2::text[])
-          LIMIT 1
-        `, [id, activeInterventionStatuses]);
+        // Blokada wiersza patrolu synchronizuje usuwanie z tworzeniem
+        // i przydzielaniem interwencji, które również używają FOR UPDATE.
+        const client = await pool.connect();
 
-        if (activeIntervention.rowCount) {
-          return res.status(409).json({
-            error: 'Nie można usunąć patrolu przypisanego do aktywnej interwencji. Najpierw zakończ interwencję lub zmień jej przydział.'
-          });
+        try {
+          await client.query('BEGIN');
+
+          const unitResult = await client.query(
+            'SELECT id FROM units WHERE id = $1 FOR UPDATE',
+            [id]
+          );
+
+          if (!unitResult.rowCount) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({
+              error: 'Nie znaleziono wpisu.'
+            });
+          }
+
+          const activeIntervention = await client.query(`
+            SELECT id
+            FROM interventions
+            WHERE unit_id = $1
+              AND status = ANY($2::text[])
+            LIMIT 1
+          `, [id, activeInterventionStatuses]);
+
+          if (activeIntervention.rowCount) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({
+              error: 'Nie można usunąć patrolu przypisanego do aktywnej interwencji. Najpierw zakończ interwencję lub zmień jej przydział.'
+            });
+          }
+
+          await client.query(
+            'DELETE FROM units WHERE id = $1',
+            [id]
+          );
+
+          await client.query('COMMIT');
+          return res.json({ success: true });
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw error;
+        } finally {
+          client.release();
         }
       }
 
@@ -1165,6 +1241,7 @@ async function addInterventionHistory(
 app.get(
   '/api/interventions',
   requireLogin,
+  requireDispatcher,
   asyncRoute(async (req, res) => {
     const archive = req.query.archive === '1';
 
@@ -1641,7 +1718,18 @@ app.get(
 // PLIKI STRONY I BŁĘDY
 // --------------------------------------------------
 
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1d', etag: true, lastModified: true }));
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '1d',
+  etag: true,
+  lastModified: true,
+  setHeaders(res, filePath) {
+    // HTML musi być ponownie walidowany, aby nowa wersja assetów
+    // nie była blokowana przez zapisany w cache stary index.html.
+    if (path.extname(filePath).toLowerCase() === '.html') {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+}));
 
 app.get('/', (req, res) => {
   res.sendFile(
