@@ -18,6 +18,7 @@ let notificationTimer = null;
 let knownInterventionIds = null;
 let notificationAudioContext = null;
 let dispatchLoading = false;
+let notificationCheckInProgress = false;
 
 const dispatchStatuses = [
   "Oczekuje na przydział",
@@ -94,6 +95,7 @@ function showMessage(message, isError = false) {
   element.textContent = message;
   element.classList.remove("hidden");
   element.classList.toggle("error", isError);
+  element.classList.toggle("success", !isError);
 
   clearTimeout(showMessage.timer);
 
@@ -385,9 +387,11 @@ const modules = {
   }
 };
 
-function fieldHtml(field, value = "") {
+function fieldHtml(field, value = "", required = false) {
   const [name, label, type] = field;
   const safe = escapeHtml(value);
+  const inputId = `record-${name}`;
+  const requiredAttribute = required ? "required" : "";
 
   if (type === "checkbox") {
     return `
@@ -401,14 +405,21 @@ function fieldHtml(field, value = "") {
 
   if (type === "textarea") {
     return `
-      <label>${label}</label>
-      <textarea name="${name}" rows="4">${safe}</textarea>
+      <label for="${inputId}">${label}</label>
+      <textarea id="${inputId}" name="${name}" rows="4"
+        ${requiredAttribute}>${safe}</textarea>
     `;
   }
 
+  const inputType = name === "amount" ? "number" : (type || "text");
+  const numericAttributes = name === "amount"
+    ? 'min="0" step="0.01"'
+    : "";
+
   return `
-    <label>${label}</label>
-    <input name="${name}" type="${type || "text"}" value="${safe}">
+    <label for="${inputId}">${label}</label>
+    <input id="${inputId}" name="${name}" type="${inputType}"
+      value="${safe}" ${requiredAttribute} ${numericAttributes}>
   `;
 }
 
@@ -472,7 +483,9 @@ async function openPage(page) {
 
 document.querySelectorAll("[data-page]").forEach(button => {
   button.addEventListener("click", () => {
-    openPage(button.dataset.page);
+    openPage(button.dataset.page).catch(error => {
+      showMessage(error.message || "Nie udało się otworzyć modułu.", true);
+    });
   });
 });
 
@@ -483,11 +496,18 @@ document.querySelectorAll("[data-page]").forEach(button => {
 async function renderInterventionsBoard() {
   state.currentPage = "interventions";
 
+  const endpoint = isAdmin()
+    ? "/api/interventions"
+    : "/api/interventions/mine";
+  const heading = isAdmin()
+    ? "REJESTR INTERWENCJI"
+    : "INTERWENCJE MOJEGO PATROLU";
+
   contentArea.innerHTML = `
     <div class="section-title">INTERWENCJE</div>
     <section class="panel">
       <div class="dispatch-toolbar">
-        <h2>REJESTR INTERWENCJI</h2>
+        <h2>${heading}</h2>
         <button type="button" id="refreshBluebirdInterventions"
           class="small-button">ODŚWIEŻ</button>
       </div>
@@ -503,7 +523,7 @@ async function renderInterventionsBoard() {
     list.textContent = "Pobieranie interwencji...";
 
     try {
-      const interventions = await api("/api/interventions");
+      const interventions = await api(endpoint);
 
       list.innerHTML = interventions.length
         ? interventions.map(item => {
@@ -600,7 +620,9 @@ async function renderModule(page) {
         <h2>DODAJ NOWY WPIS</h2>
 
         <form id="recordForm">
-          ${config.fields.map(field => fieldHtml(field)).join("")}
+          ${config.fields.map(field =>
+            fieldHtml(field, "", config.required.includes(field[0]))
+          ).join("")}
           <button class="primary-button" type="submit">ZAPISZ</button>
         </form>
       </section>
@@ -699,8 +721,8 @@ function renderCitizenSearch() {
       <h2>WYSZUKIWANIE</h2>
 
       <form id="citizenSearchForm">
-        <label>Imię, nazwisko lub identyfikator RP</label>
-        <input name="query" required>
+        <label for="citizenSearchQuery">Imię, nazwisko lub identyfikator RP</label>
+        <input id="citizenSearchQuery" name="query" required>
         <button class="primary-button" type="submit">SZUKAJ</button>
       </form>
 
@@ -1134,7 +1156,9 @@ function dispatchNav(active) {
 function bindDispatchNav() {
   document.querySelectorAll("[data-dispatch-page]").forEach(button => {
     button.addEventListener("click", () => {
-      renderDispatchPage(button.dataset.dispatchPage);
+      renderDispatchPage(button.dataset.dispatchPage).catch(error => {
+        showMessage(error.message || "Nie udało się otworzyć widoku Dyżurki.", true);
+      });
     });
   });
 }
@@ -1221,7 +1245,9 @@ async function renderDispatchInterventions() {
   bindDispatchNav();
 
   $("#dispatchRefresh").addEventListener("click", () => {
-    renderDispatchInterventions();
+    renderDispatchInterventions().catch(error => {
+      showMessage(error.message || "Nie udało się odświeżyć interwencji.", true);
+    });
   });
 
   try {
@@ -1674,10 +1700,17 @@ document.addEventListener(
 );
 
 async function checkMyInterventions() {
-  if (!state.user || isDispatcher()) return;
+  if (!state.user || isDispatcher() || notificationCheckInProgress) return;
+
+  notificationCheckInProgress = true;
+  const userId = state.user.id;
 
   try {
     const interventions = await api("/api/interventions/mine");
+
+    // Odpowiedź rozpoczęta przed wylogowaniem nie może wyświetlić
+    // powiadomienia w kolejnej sesji.
+    if (!state.user || state.user.id !== userId || isDispatcher()) return;
 
     const currentIds = new Set(
       interventions.map(item => String(item.id))
@@ -1707,6 +1740,8 @@ async function checkMyInterventions() {
     knownInterventionIds = currentIds;
   } catch {
     // Brak połączenia nie przerywa pracy aplikacji.
+  } finally {
+    notificationCheckInProgress = false;
   }
 }
 
