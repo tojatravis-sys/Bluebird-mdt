@@ -12,6 +12,7 @@
 6. **Interfejs:** komunikaty sukcesu używają zielonego stylu, a obsługa kliknięć nawigacji przechwytuje błędy asynchroniczne. Pola wymagane są oznaczane w formularzach; kwota mandatu ma typ liczbowy i zakres od zera. Dodano powiązania etykiet z polami w formularzach modułów i wyszukiwaniu obywateli.
 7. **Responsywność:** na tabletach 421–899 px panel używa szerszego układu; karty interwencji na desktopie mają jasne tło i czytelny kontrast zamiast ciemnego tła z ciemnym tekstem.
 8. **Dokumentacja i CI:** README został dopasowany do rzeczywistego Node.js 22 i PostgreSQL oraz usunięto nieprawdziwe domyślne dane logowania. Dodano `npm run check` i workflow GitHub Actions.
+9. **Repozytorium:** dodano `.gitignore`, aby nie dodawać przypadkowo `.env`, logów i `node_modules`.
 
 ## Ryzyka pozostające do osobnego etapu
 
@@ -24,6 +25,8 @@
 - **Dopasowanie patroli:** `/api/interventions/mine` dopasowuje dane funkcjonariusza do tekstowego pola `units.officers` przez wyszukiwanie podciągu. Może to dawać fałszywe trafienia (np. krótkie identyfikatory). Docelowo przydałaby się relacyjna tabela członkostwa patroli, ale wymaga migracji i planu zachowania obecnych danych.
 - **Relacje obywateli:** część tabel przechowuje `person_id` bez klucza obcego. Usunięcie obywatela może pozostawić osierocone odwołania; naprawa wymaga migracji i decyzji o zachowaniu danych historycznych.
 - **Polling:** funkcjonariusze odpytują przydziały co 12 s, a Dyżurka odświeża widok co 15 s. Przy większej liczbie otwartych kart może to zwiększać obciążenie. Nie wykonywano benchmarku ani testu obciążeniowego.
+- **Powtarzalność instalacji:** repozytorium nie ma `package-lock.json`, a zależności są zapisane zakresami semver. Instalacje mogą więc rozwiązać różne wersje zależności. Dodanie lockfile wymaga wygenerowania go przez npm i sprawdzenia na docelowym Node.js.
+- **Plik archiwalny:** w katalogu głównym znajduje się `bluebird-mdt-polska-roblox-final.zip`. Nie udało się odczytać zawartości binarnego ZIP przez dostępne źródło GitHub; nie był używany przez serwer i nie został objęty audytem.
 
 ## Weryfikacja
 
