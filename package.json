@@ -1,8 +1,8 @@
 {
-  "name": "bluebird-mdt-kwp-bydgoszcz",
+  "name": "kwp-bydgoszcz-mdt",
   "version": "1.0.0",
   "private": true,
-  "description": "Bluebird MDT - KWP BYDGOSZCZ (system roleplay)",
+  "description": "MDT KWP BYDGOSZCZ (system roleplay)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
