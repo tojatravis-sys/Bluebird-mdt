@@ -68,7 +68,7 @@ async function initializeDatabase() {
       display_name TEXT DEFAULT '',
       badge TEXT DEFAULT '',
       rank TEXT DEFAULT 'Funkcjonariusz',
-      department TEXT DEFAULT 'KPP Lubin',
+      department TEXT DEFAULT 'KWP BYDGOSZCZ',
       role_group TEXT DEFAULT 'Funkcjonariusz',
       active INTEGER DEFAULT 1,
       created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -172,6 +172,10 @@ async function initializeDatabase() {
 
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS role_group TEXT DEFAULT 'Funkcjonariusz';
+
+    UPDATE users
+    SET department = 'KWP BYDGOSZCZ'
+    WHERE department = 'KPP Lubin';
 
     ALTER TABLE interventions
       ADD COLUMN IF NOT EXISTS incident_number TEXT;
@@ -522,7 +526,7 @@ app.post('/api/setup', asyncRoute(async (req, res) => {
       'Komendantura',
       '',
       'Komendant',
-      'KPP Lubin',
+      'KWP BYDGOSZCZ',
       'Komendantura'
     ]);
 
@@ -550,7 +554,7 @@ app.post('/api/setup', asyncRoute(async (req, res) => {
     displayName: 'Komendantura',
     badge: '',
     rank: 'Komendant',
-    department: 'KPP Lubin',
+    department: 'KWP BYDGOSZCZ',
     roleGroup: 'Komendantura'
   };
 
@@ -591,7 +595,7 @@ app.post('/api/login', asyncRoute(async (req, res) => {
     displayName: user.display_name || user.username,
     badge: user.badge || '',
     rank: user.rank || 'Funkcjonariusz',
-    department: user.department || 'KPP Lubin',
+    department: user.department || 'KWP BYDGOSZCZ',
     roleGroup: user.role_group || 'Funkcjonariusz'
   };
 
@@ -1024,7 +1028,7 @@ app.post(
       const result = await pool.query(`
         INSERT INTO users
           (username,password_hash,display_name,badge,rank,department,role_group,active)
-        VALUES ($1,$2,$3,$4,$5,'KPP Lubin',$6,1)
+        VALUES ($1,$2,$3,$4,$5,'KWP BYDGOSZCZ',$6,1)
         RETURNING id,username,display_name,badge,rank,department,role_group,active
       `, [
         username,
