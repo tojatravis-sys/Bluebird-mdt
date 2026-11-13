@@ -1684,7 +1684,7 @@ async function start() {
 
     app.listen(PORT, '0.0.0.0', () => {
       console.log(
-        `Bluebird działa na porcie ${PORT} i korzysta z PostgreSQL.`
+        `KWP BYDGOSZCZ MDT działa na porcie ${PORT} i korzysta z PostgreSQL.`
       );
     });
   } catch (error) {
