@@ -1,11 +1,11 @@
-# Bluebird MDT — KWP BYDGOSZCZ (Roblox RP)
+# KWP BYDGOSZCZ — System MDT (Roblox RP)
 
 Polskojęzyczny panel MDT dla fikcyjnego serwera Roblox RP, oznaczony jako KWP BYDGOSZCZ. To projekt roleplay — nie jest oficjalnym systemem Policji ani narzędziem do obsługi rzeczywistych danych policyjnych.
 
 ## Jednostka i oznaczenia
 - Jednostka w interfejsie: Komenda Wojewódzka Policji — BYDGOSZCZ.
 - Oznaczenie jest przeznaczone wyłącznie do fikcyjnej rozgrywki Roblox RP.
-- Bluebird pozostaje nazwą techniczną aplikacji.
+- Nazwa systemu w interfejsie i pakiecie: KWP BYDGOSZCZ MDT.
 
 ## Uruchomienie
 1. Zainstaluj Node.js 18 lub nowszy.
