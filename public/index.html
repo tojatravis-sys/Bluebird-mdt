@@ -7,7 +7,7 @@
   <meta name="theme-color" content="#101b20">
   <meta name="description" content="KWP BYDGOSZCZ — system MDT">
   <title>KWP BYDGOSZCZ | MDT</title>
-  <link rel="stylesheet" href="/style.css?v=20261115-1">
+  <link rel="stylesheet" href="/style.css?v=20261115-2">
 </head>
 
 <body>
@@ -275,14 +275,21 @@
       const progressBar = document.getElementById("bootProgressBar");
       const status = document.getElementById("bootStatus");
 
-      if (progressBar) progressBar.style.width = "100%";
+      if (progressBar) {
+        progressBar.style.width = "0";
+        progressBar.style.transition = "width 5s linear";
+      }
       if (status) status.textContent = "ŁADOWANIE SYSTEMU KWP BYDGOSZCZ...";
 
       window.requestAnimationFrame(() => {
-        window.setTimeout(() => {
-          bootScreen?.classList.add("boot-hidden");
-        }, 5000);
+        window.requestAnimationFrame(() => {
+          if (progressBar) progressBar.style.width = "100%";
+        });
       });
+
+      window.setTimeout(() => {
+        bootScreen?.classList.add("boot-hidden");
+      }, 5000);
     })();
   </script>
 
