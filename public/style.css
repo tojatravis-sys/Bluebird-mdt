@@ -541,6 +541,22 @@ form button:not(.primary-button) {
   letter-spacing: 1px;
 }
 
+.boot-server-credit {
+  margin-top: 18px;
+  color: #a9c5df;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  line-height: 1.8;
+}
+
+.boot-server-credit strong {
+  color: #b86cff;
+  font-size: 18px;
+  letter-spacing: 2px;
+  text-shadow: 0 0 16px rgba(150, 50, 255, .45);
+}
+
 /* PANEL DYZURNEGO I INTERWENCJE */
 
 .dispatch-nav {
