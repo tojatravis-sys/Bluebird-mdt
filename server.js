@@ -140,6 +140,19 @@ async function initializeDatabase() {
       PRIMARY KEY (sid)
     );
 
+    CREATE TABLE IF NOT EXISTS dispatcher_access_log (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      logged_in_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      logged_out_at TIMESTAMPTZ
+    );
+
+    CREATE INDEX IF NOT EXISTS dispatcher_access_log_user_idx
+      ON dispatcher_access_log(user_id, logged_in_at DESC);
+
     CREATE INDEX IF NOT EXISTS user_sessions_expire_idx
       ON user_sessions (expire);
 
@@ -218,6 +231,7 @@ function currentUser(req) {
     id: req.session.user.id,
     username: req.session.user.username,
     displayName: req.session.user.displayName,
+    activeName: req.session.user.activeName || '',
     badge: req.session.user.badge,
     rank: req.session.user.rank,
     department: req.session.user.department,
@@ -574,22 +588,14 @@ app.post('/api/login', asyncRoute(async (req, res) => {
     'SELECT * FROM users WHERE username = $1',
     [username]
   );
-
   const user = result.rows[0];
 
-  if (
-    !user ||
-    !user.active ||
-    !(await bcrypt.compare(password, user.password_hash))
-  ) {
-    return res.status(401).json({
-      error: 'Nieprawidłowy login lub hasło.'
-    });
+  if (!user || !user.active || !(await bcrypt.compare(password, user.password_hash))) {
+    return res.status(401).json({ error: 'Nieprawidłowy login lub hasło.' });
   }
 
   await regenerateSession(req);
-
-  req.session.user = {
+  const account = {
     id: user.id,
     username: user.username,
     displayName: user.display_name || user.username,
@@ -599,19 +605,57 @@ app.post('/api/login', asyncRoute(async (req, res) => {
     roleGroup: user.role_group || 'Funkcjonariusz'
   };
 
+  if (account.roleGroup === 'DYŻURNY') {
+    req.session.pendingDispatcherUser = account;
+    await saveSession(req);
+    return res.json({ success: true, requiresDispatcherIdentity: true });
+  }
+
+  req.session.user = account;
+  await saveSession(req);
+  res.json({ success: true, user: currentUser(req) });
+}));
+
+app.post('/api/dispatcher/identify', asyncRoute(async (req, res) => {
+  const pending = req.session.pendingDispatcherUser;
+  if (!pending || pending.roleGroup !== 'DYŻURNY') {
+    return res.status(401).json({ error: 'Najpierw zaloguj się na konto Dyżurnego.' });
+  }
+
+  const firstName = cleanText(req.body.first_name, 50);
+  const lastName = cleanText(req.body.last_name, 50);
+  if (!firstName || !lastName) {
+    return res.status(400).json({ error: 'Podaj imię i nazwisko dyżurnego.' });
+  }
+
+  const activeName = `${firstName} ${lastName}`;
+  await pool.query(
+    `INSERT INTO dispatcher_access_log (user_id, session_id, first_name, last_name)
+     VALUES ($1, $2, $3, $4)`,
+    [pending.id, req.sessionID, firstName, lastName]
+  );
+
+  req.session.user = { ...pending, displayName: activeName, activeName };
+  delete req.session.pendingDispatcherUser;
   await saveSession(req);
 
-  res.json({
-    success: true,
-    user: currentUser(req)
-  });
+  res.json({ success: true, user: currentUser(req) });
 }));
 
 app.get('/api/me', (req, res) => {
   res.json(currentUser(req));
 });
 
-app.post('/api/logout', (req, res) => {
+app.post('/api/logout', asyncRoute(async (req, res) => {
+  if (req.session.user?.roleGroup === 'DYŻURNY') {
+    await pool.query(
+      `UPDATE dispatcher_access_log
+       SET logged_out_at = CURRENT_TIMESTAMP
+       WHERE session_id = $1 AND logged_out_at IS NULL`,
+      [req.sessionID]
+    );
+  }
+
   req.session.destroy(error => {
     if (error) {
       return res.status(500).json({
@@ -622,7 +666,7 @@ app.post('/api/logout', (req, res) => {
     res.clearCookie('bluebird.sid');
     res.json({ success: true });
   });
-});
+}));
 
 // --------------------------------------------------
 // PULPIT
@@ -961,6 +1005,23 @@ app.get(
 // --------------------------------------------------
 
 app.get(
+  '/api/dispatcher-logins',
+  requireLogin,
+  requireAdmin,
+  asyncRoute(async (req, res) => {
+    const result = await pool.query(`
+      SELECT l.id, l.first_name, l.last_name, l.logged_in_at, l.logged_out_at,
+             u.username, u.display_name
+      FROM dispatcher_access_log l
+      JOIN users u ON u.id = l.user_id
+      ORDER BY l.logged_in_at DESC
+      LIMIT 100
+    `);
+    res.json(result.rows);
+  })
+);
+
+app.get(
   '/api/users',
   requireLogin,
   requireAdmin,
@@ -983,15 +1044,11 @@ app.post(
   asyncRoute(async (req, res) => {
     const username = cleanText(req.body.username, 40).toLowerCase();
     const password = String(req.body.password || '');
-    const firstName = cleanText(req.body.first_name, 50);
-    const lastName = cleanText(req.body.last_name, 50);
+    const displayName = cleanText(req.body.display_name, 100);
     const roleGroup = cleanText(
       req.body.role_group || 'Funkcjonariusz',
       30
     );
-    const displayName = roleGroup === 'DYŻURNY'
-      ? cleanText(`${firstName} ${lastName}`, 100)
-      : cleanText(req.body.display_name, 100);
     const badge = cleanText(req.body.badge, 30);
     const rank = cleanText(req.body.rank, 60);
 
@@ -1004,12 +1061,6 @@ app.post(
     if (password.length < 12) {
       return res.status(400).json({
         error: 'Hasło musi mieć co najmniej 12 znaków.'
-      });
-    }
-
-    if (roleGroup === 'DYŻURNY' && (!firstName || !lastName)) {
-      return res.status(400).json({
-        error: 'Dla konta Dyżurnego wymagane jest imię i nazwisko.'
       });
     }
 
