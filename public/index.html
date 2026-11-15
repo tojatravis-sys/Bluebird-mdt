@@ -68,35 +68,28 @@
         </p>
 
         <form id="loginForm">
+          <div id="loginCredentials">
+            <label for="loginUsername">IDENTYFIKATOR</label>
+            <input id="loginUsername" name="username" type="text"
+              autocomplete="username" required>
 
-          <label for="loginUsername">
-            IDENTYFIKATOR
-          </label>
+            <label for="loginPassword">HASŁO</label>
+            <input id="loginPassword" name="password" type="password"
+              autocomplete="current-password" required>
+          </div>
 
-          <input
-            id="loginUsername"
-            name="username"
-            type="text"
-            autocomplete="username"
-            required
-          >
+          <div id="dispatcherIdentityFields" class="hidden">
+            <p class="muted">Podaj swoje dane, aby rozpocząć pracę na wspólnym koncie Dyżurnego.</p>
+            <label for="dispatcherLoginFirstName">IMIĘ</label>
+            <input id="dispatcherLoginFirstName" name="dispatcher_first_name"
+              autocomplete="given-name">
 
-          <label for="loginPassword">
-            HASŁO
-          </label>
+            <label for="dispatcherLoginLastName">NAZWISKO</label>
+            <input id="dispatcherLoginLastName" name="dispatcher_last_name"
+              autocomplete="family-name">
+          </div>
 
-          <input
-            id="loginPassword"
-            name="password"
-            type="password"
-            autocomplete="current-password"
-            required
-          >
-
-          <button class="primary-button" type="submit">
-            ZALOGUJ
-          </button>
-
+          <button class="primary-button" type="submit">ZALOGUJ</button>
         </form>
       </section>
 
@@ -271,7 +264,7 @@
   </footer>
 
   <!-- GŁÓWNY SKRYPT APLIKACJI -->
-  <script src="/app.js?v=20261115-2"></script>
+  <script src="/app.js?v=20261115-3"></script>
 
   <!-- Ekran startowy widoczny przez 5 sekund. -->
   <script>
