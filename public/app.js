@@ -257,27 +257,56 @@ $("#loginForm")?.addEventListener("submit", async event => {
 
   const form = event.currentTarget;
   const button = form.querySelector('button[type="submit"]');
-
+  const credentials = $("#loginCredentials");
+  const identityFields = $("#dispatcherIdentityFields");
   button.disabled = true;
 
   try {
-    const result = await api("/api/login", {
-      method: "POST",
-      body: JSON.stringify({
-        username: form.elements.username.value.trim(),
-        password: form.elements.password.value
-      })
-    });
+    let result;
 
+    if (form.dataset.awaitingDispatcherIdentity === "true") {
+      result = await api("/api/dispatcher/identify", {
+        method: "POST",
+        body: JSON.stringify({
+          first_name: form.elements.dispatcher_first_name.value.trim(),
+          last_name: form.elements.dispatcher_last_name.value.trim()
+        })
+      });
+    } else {
+      result = await api("/api/login", {
+        method: "POST",
+        body: JSON.stringify({
+          username: form.elements.username.value.trim(),
+          password: form.elements.password.value
+        })
+      });
+
+      if (result.requiresDispatcherIdentity) {
+        form.dataset.awaitingDispatcherIdentity = "true";
+        credentials.classList.add("hidden");
+        identityFields.classList.remove("hidden");
+        form.elements.dispatcher_first_name.required = true;
+        form.elements.dispatcher_last_name.required = true;
+        button.textContent = "POTWIERDŹ I ZALOGUJ";
+        showMessage("Podaj imię i nazwisko osoby rozpoczynającej dyżur.");
+        return;
+      }
+    }
+
+    delete form.dataset.awaitingDispatcherIdentity;
     state.user = result.user || result;
-
     form.reset();
+    credentials.classList.remove("hidden");
+    identityFields.classList.add("hidden");
+    form.elements.username.required = true;
+    form.elements.password.required = true;
+    form.elements.dispatcher_first_name.required = false;
+    form.elements.dispatcher_last_name.required = false;
+    button.textContent = "ZALOGUJ";
 
     updateUserPanel();
     setNavigationVisibility();
     showScreen("dashboardScreen");
-
-    // Powiadomienia uruchamiają się również po ręcznym logowaniu.
     startBackgroundTasks();
 
     if (isDispatcher()) {
@@ -759,6 +788,7 @@ async function renderUsers() {
 
   try {
     state.users = await api("/api/users");
+    const dispatcherLogins = await api("/api/dispatcher-logins");
 
     contentArea.innerHTML = `
       <div class="section-title">ZARZĄDZANIE DOSTĘPAMI</div>
@@ -780,18 +810,8 @@ async function renderUsers() {
           <input name="password" type="password" required
             minlength="12" autocomplete="new-password">
 
-          <div id="displayNameContainer">
-            <label>Imię i nazwisko</label>
-            <input name="display_name" id="accountDisplayName" required>
-          </div>
-
-          <div id="dispatcherNameContainer" class="hidden">
-            <label>Imię dyżurnego</label>
-            <input name="first_name" id="dispatcherFirstName" autocomplete="given-name">
-
-            <label>Nazwisko dyżurnego</label>
-            <input name="last_name" id="dispatcherLastName" autocomplete="family-name">
-          </div>
+          <label>Imię i nazwisko konta</label>
+          <input name="display_name" id="accountDisplayName" required>
 
           <label>Numer odznaki</label>
           <input name="badge">
@@ -846,17 +866,18 @@ async function renderUsers() {
         <h2>LISTA KONT</h2>
         <div id="usersList"></div>
       </section>
+
+      <section class="panel">
+        <h2>HISTORIA LOGOWAŃ DYŻURNYCH</h2>
+        <div id="dispatcherLoginHistory"></div>
+      </section>
     `;
 
     const form = $("#userForm");
     const roleSelect = $("#accountRole");
     const rankSelect = $("#accountRank");
     const rankContainer = $("#rankContainer");
-    const displayNameContainer = $("#displayNameContainer");
     const displayNameInput = $("#accountDisplayName");
-    const dispatcherNameContainer = $("#dispatcherNameContainer");
-    const dispatcherFirstName = $("#dispatcherFirstName");
-    const dispatcherLastName = $("#dispatcherLastName");
 
     function updateRankVisibility() {
       const dispatcher = roleSelect.value === "DYŻURNY";
@@ -864,16 +885,6 @@ async function renderUsers() {
       rankContainer.classList.toggle("hidden", dispatcher);
       rankSelect.required = !dispatcher;
       rankSelect.disabled = dispatcher;
-
-      displayNameContainer.classList.toggle("hidden", dispatcher);
-      displayNameInput.required = !dispatcher;
-      displayNameInput.disabled = dispatcher;
-
-      dispatcherNameContainer.classList.toggle("hidden", !dispatcher);
-      dispatcherFirstName.required = dispatcher;
-      dispatcherLastName.required = dispatcher;
-      dispatcherFirstName.disabled = !dispatcher;
-      dispatcherLastName.disabled = !dispatcher;
     }
 
     roleSelect.addEventListener("change", updateRankVisibility);
@@ -891,11 +902,7 @@ async function renderUsers() {
           body: JSON.stringify({
             username: form.elements.username.value.trim(),
             password: form.elements.password.value,
-            display_name: roleSelect.value === "DYŻURNY"
-              ? `${dispatcherFirstName.value.trim()} ${dispatcherLastName.value.trim()}`.trim()
-              : displayNameInput.value.trim(),
-            first_name: dispatcherFirstName.value.trim(),
-            last_name: dispatcherLastName.value.trim(),
+            display_name: displayNameInput.value.trim(),
             badge: form.elements.badge.value.trim(),
             rank: roleSelect.value === "DYŻURNY"
               ? "Dyżurny"
@@ -919,6 +926,18 @@ async function renderUsers() {
       list.innerHTML = "<p>Brak utworzonych kont.</p>";
       return;
     }
+
+    const history = $("#dispatcherLoginHistory");
+    history.innerHTML = dispatcherLogins.length
+      ? dispatcherLogins.map(entry => `
+        <div class="user-row">
+          <strong>${escapeHtml(entry.first_name)} ${escapeHtml(entry.last_name)}</strong>
+          <p>Konto: ${escapeHtml(entry.username)}</p>
+          <p>Logowanie: ${new Date(entry.logged_in_at).toLocaleString("pl-PL")}</p>
+          <p>Wylogowanie: ${entry.logged_out_at ? new Date(entry.logged_out_at).toLocaleString("pl-PL") : "Sesja aktywna"}</p>
+        </div>
+      `).join("")
+      : "<p>Brak zapisanych logowań dyżurnych.</p>";
 
     list.innerHTML = state.users.map(user => `
       <div class="user-row">
