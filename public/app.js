@@ -780,8 +780,18 @@ async function renderUsers() {
           <input name="password" type="password" required
             minlength="12" autocomplete="new-password">
 
-          <label>Imię i nazwisko</label>
-          <input name="display_name" required>
+          <div id="displayNameContainer">
+            <label>Imię i nazwisko</label>
+            <input name="display_name" id="accountDisplayName" required>
+          </div>
+
+          <div id="dispatcherNameContainer" class="hidden">
+            <label>Imię dyżurnego</label>
+            <input name="first_name" id="dispatcherFirstName" autocomplete="given-name">
+
+            <label>Nazwisko dyżurnego</label>
+            <input name="last_name" id="dispatcherLastName" autocomplete="family-name">
+          </div>
 
           <label>Numer odznaki</label>
           <input name="badge">
@@ -842,6 +852,11 @@ async function renderUsers() {
     const roleSelect = $("#accountRole");
     const rankSelect = $("#accountRank");
     const rankContainer = $("#rankContainer");
+    const displayNameContainer = $("#displayNameContainer");
+    const displayNameInput = $("#accountDisplayName");
+    const dispatcherNameContainer = $("#dispatcherNameContainer");
+    const dispatcherFirstName = $("#dispatcherFirstName");
+    const dispatcherLastName = $("#dispatcherLastName");
 
     function updateRankVisibility() {
       const dispatcher = roleSelect.value === "DYŻURNY";
@@ -849,6 +864,16 @@ async function renderUsers() {
       rankContainer.classList.toggle("hidden", dispatcher);
       rankSelect.required = !dispatcher;
       rankSelect.disabled = dispatcher;
+
+      displayNameContainer.classList.toggle("hidden", dispatcher);
+      displayNameInput.required = !dispatcher;
+      displayNameInput.disabled = dispatcher;
+
+      dispatcherNameContainer.classList.toggle("hidden", !dispatcher);
+      dispatcherFirstName.required = dispatcher;
+      dispatcherLastName.required = dispatcher;
+      dispatcherFirstName.disabled = !dispatcher;
+      dispatcherLastName.disabled = !dispatcher;
     }
 
     roleSelect.addEventListener("change", updateRankVisibility);
@@ -866,7 +891,11 @@ async function renderUsers() {
           body: JSON.stringify({
             username: form.elements.username.value.trim(),
             password: form.elements.password.value,
-            display_name: form.elements.display_name.value.trim(),
+            display_name: roleSelect.value === "DYŻURNY"
+              ? `${dispatcherFirstName.value.trim()} ${dispatcherLastName.value.trim()}`.trim()
+              : displayNameInput.value.trim(),
+            first_name: dispatcherFirstName.value.trim(),
+            last_name: dispatcherLastName.value.trim(),
             badge: form.elements.badge.value.trim(),
             rank: roleSelect.value === "DYŻURNY"
               ? "Dyżurny"
