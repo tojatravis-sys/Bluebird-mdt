@@ -983,13 +983,17 @@ app.post(
   asyncRoute(async (req, res) => {
     const username = cleanText(req.body.username, 40).toLowerCase();
     const password = String(req.body.password || '');
-    const displayName = cleanText(req.body.display_name, 100);
-    const badge = cleanText(req.body.badge, 30);
-    const rank = cleanText(req.body.rank, 60);
+    const firstName = cleanText(req.body.first_name, 50);
+    const lastName = cleanText(req.body.last_name, 50);
     const roleGroup = cleanText(
       req.body.role_group || 'Funkcjonariusz',
       30
     );
+    const displayName = roleGroup === 'DYŻURNY'
+      ? cleanText(`${firstName} ${lastName}`, 100)
+      : cleanText(req.body.display_name, 100);
+    const badge = cleanText(req.body.badge, 30);
+    const rank = cleanText(req.body.rank, 60);
 
     if (!/^[a-z0-9_.-]{3,40}$/.test(username)) {
       return res.status(400).json({
@@ -1000,6 +1004,18 @@ app.post(
     if (password.length < 12) {
       return res.status(400).json({
         error: 'Hasło musi mieć co najmniej 12 znaków.'
+      });
+    }
+
+    if (roleGroup === 'DYŻURNY' && (!firstName || !lastName)) {
+      return res.status(400).json({
+        error: 'Dla konta Dyżurnego wymagane jest imię i nazwisko.'
+      });
+    }
+
+    if (!displayName) {
+      return res.status(400).json({
+        error: 'Podaj imię i nazwisko.'
       });
     }
 
