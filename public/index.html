@@ -5,9 +5,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#101b20">
-  <meta name="description" content="KWP BYDGOSZCZ — system MDT do gry roleplay">
+  <meta name="description" content="KWP BYDGOSZCZ — system MDT">
   <title>KWP BYDGOSZCZ | MDT</title>
-  <link rel="stylesheet" href="/style.css?v=20261111-2">
+  <link rel="stylesheet" href="/style.css?v=20261115-1">
 </head>
 
 <body>
@@ -39,7 +39,7 @@
     <div class="device-top">
       <div class="camera"></div>
       <div class="brand">KWP</div>
-      <div class="device-subtitle">SYSTEM MDT • ROLEPLAY</div>
+      <div class="device-subtitle">SYSTEM MDT</div>
     </div>
 
     <div class="screen">
@@ -47,7 +47,7 @@
       <!-- NAGŁÓWEK -->
       <header class="app-header">
         <div class="app-logo">KWP</div>
-        <div class="app-unit">KOMENDA WOJEWÓDZKA POLICJI • ROLEPLAY</div>
+        <div class="app-unit">KOMENDA WOJEWÓDZKA POLICJI</div>
         <div class="app-location">BYDGOSZCZ</div>
       </header>
 
@@ -266,9 +266,9 @@
   </footer>
 
   <!-- GŁÓWNY SKRYPT APLIKACJI -->
-  <script src="/app.js?v=20261111-2"></script>
+  <script src="/app.js?v=20261115-1"></script>
 
-  <!-- Krótki ekran startowy bez sztucznego, pięciosekundowego opóźnienia. -->
+  <!-- Ekran startowy widoczny przez 5 sekund. -->
   <script>
     (() => {
       const bootScreen = document.getElementById("bootScreen");
@@ -281,7 +281,7 @@
       window.requestAnimationFrame(() => {
         window.setTimeout(() => {
           bootScreen?.classList.add("boot-hidden");
-        }, 80);
+        }, 5000);
       });
     })();
   </script>
